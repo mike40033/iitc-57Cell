@@ -2,7 +2,7 @@
 // @id             iitc-plugin-collocated-portals@57Cell
 // @name           IITC plugin: Collocated Portals
 // @category       Info
-// @version        0.0.1.20101012.21732
+// @version        0.0.2.20101027.314159
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.meta.js
 // @downloadURL    https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.user.js
@@ -11,6 +11,10 @@
 // @include        http://*.ingress.com/intel*
 // @match          https://*.ingress.com/intel*
 // @match          http://*.ingress.com/intel*
+// @include        https://*.ingress.com/*
+// @include        http://*.ingress.com/*
+// @match          https://*.ingress.com/*
+// @match          http://*.ingress.com/*
 // @include        https://*.ingress.com/collcation/*
 // @include        http://*.ingress.com/mission/*
 // @match          https://*.ingress.com/mission/*
