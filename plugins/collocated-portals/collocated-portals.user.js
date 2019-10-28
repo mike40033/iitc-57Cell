@@ -2,7 +2,7 @@
 // @id             iitc-plugin-collocated-portals@57Cell
 // @name           IITC plugin: Collocated Portals
 // @category       Info
-// @version        0.0.2.20101027.314159
+// @version        0.0.3.20191028.618034
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.meta.js
 // @downloadURL    https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.user.js
@@ -122,7 +122,7 @@ cleanupPortalCache: function() {
             if (hasTwin && !this.markedStarterPortals[guid]) {
                 this.markedStarterPortals[guid] = L.circleMarker(
                     L.latLng(portal.options.data.latE6 / 1E6, portal.options.data.lngE6 / 1E6), {
-                        radius: portal.options.radius + Math.ceil(portal.options.radius),
+                        radius: 25,
                         weight: 3,
                         opacity: 1,
                         color: window.plugin.collocated.collocated_COLOR,
