@@ -2,7 +2,7 @@
 // @id             iitc-plugin-collocated-portals@57Cell
 // @name           IITC plugin: Collocated Portals
 // @category       Info
-// @version        0.0.3.20191028.618034
+// @version        0.1.0.20191111.271828
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.meta.js
 // @downloadURL    https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.user.js
@@ -103,24 +103,29 @@ cleanupPortalCache: function() {
             // Compatibility
             portal = window.portals[guid] || oldval;
             var hasTwin = false;
+            var falseTwin = false;
             for (var otherID in window.portals) {
                 if (guid === otherID) continue;
                 var otherPortal = window.portals[otherID];
                 if (portal.options.data.latE6 === otherPortal.options.data.latE6 && portal.options.data.lngE6 === otherPortal.options.data.lngE6) {
                     hasTwin = true;
+                } else if (portal.options.data.latE6 == -31950752 && portal.options.data.lngE6 == 115871288) {
+                    hasTwin = true;
+                    falseTwin = true;
+                } else if (portal.options.data.latE6 == -31950837 && portal.options.data.lngE6 == 115871273) {
+                    hasTwin = true;
+                }
 //                } else {
 //                    if ((portal.options.data.latE6 === 0 && otherPortal.options.data.latE6 === 0)
 //                        || (portal.options.data.lngE6 === otherPortal.options.data.lngE6)) {
 //                        partnerIDs.push(otherID);
 //                    }
-                }
-
             }
             if (!hasTwin) {
                 return;
             }
             if (hasTwin && !this.markedStarterPortals[guid]) {
-                this.markedStarterPortals[guid] = L.circleMarker(
+                var marker = L.circleMarker(
                     L.latLng(portal.options.data.latE6 / 1E6, portal.options.data.lngE6 / 1E6), {
                         radius: 25,
                         weight: 3,
@@ -131,6 +136,15 @@ cleanupPortalCache: function() {
                         clickable: false
                     }
                 );
+                if (falseTwin) {
+                    var div = new L.Icon({iconUrl: 'https://raw.githubusercontent.com/mike40033/iitc-57Cell/master/plugins/collocated-portals/PluginText.png',
+                                         iconAnchor: [0,0],
+                                      iconSize: [320,116],
+                                         className: 'no-pointer-events'});
+
+                    marker = new L.Marker(L.latLng(portal.options.data.latE6 / 1E6, portal.options.data.lngE6 / 1E6), {icon:div, clickable:false, keyboard:false, opacity:100});
+                }
+                this.markedStarterPortals[guid] = marker;
                 this.collocatedPortalsLayer.addLayer(this.markedStarterPortals[guid]);
             }
 
