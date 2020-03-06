@@ -2,7 +2,7 @@
 // @id             iitc-plugin-collocated-portals@57Cell
 // @name           IITC plugin: Collocated Portals
 // @category       Info
-// @version        0.1.0.20191111.271828
+// @version        0.2.0.20200306.091215
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.meta.js
 // @downloadURL    https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.user.js
@@ -40,6 +40,7 @@ return data.trim();
 window.plugin.collocated = {
 
     collocated_COLOR: '#ffffff',
+    collocated_MULTI_COLOR: '#ffff00',
     STRAIGHT_LINE_COLOR: '#ffff00',
 
     SYNC_DELAY: 5000,
@@ -102,35 +103,30 @@ cleanupPortalCache: function() {
         if (type === 'add' || type === 'update') {
             // Compatibility
             portal = window.portals[guid] || oldval;
-            var hasTwin = false;
+            var dupes = 0;
             var falseTwin = false;
             for (var otherID in window.portals) {
                 if (guid === otherID) continue;
                 var otherPortal = window.portals[otherID];
                 if (portal.options.data.latE6 === otherPortal.options.data.latE6 && portal.options.data.lngE6 === otherPortal.options.data.lngE6) {
-                    hasTwin = true;
+                    dupes++;
                 } else if (portal.options.data.latE6 == -31950752 && portal.options.data.lngE6 == 115871288) {
-                    hasTwin = true;
+                    dupes=1;
                     falseTwin = true;
                 } else if (portal.options.data.latE6 == -31950837 && portal.options.data.lngE6 == 115871273) {
-                    hasTwin = true;
+                    dupes=1;
                 }
-//                } else {
-//                    if ((portal.options.data.latE6 === 0 && otherPortal.options.data.latE6 === 0)
-//                        || (portal.options.data.lngE6 === otherPortal.options.data.lngE6)) {
-//                        partnerIDs.push(otherID);
-//                    }
             }
-            if (!hasTwin) {
+            if (dupes == 0) {
                 return;
             }
-            if (hasTwin && !this.markedStarterPortals[guid]) {
+            if (dupes > 0 && !this.markedStarterPortals[guid]) {
                 var marker = L.circleMarker(
                     L.latLng(portal.options.data.latE6 / 1E6, portal.options.data.lngE6 / 1E6), {
-                        radius: 25,
+                        radius: dupes == 1 ? 25 : 35,
                         weight: 3,
                         opacity: 1,
-                        color: window.plugin.collocated.collocated_COLOR,
+                        color: dupes == 1 ? window.plugin.collocated.collocated_COLOR : window.plugin.collocated.collocated_MULTI_COLOR,
                         fill: true,
                         dashArray: null,
                         clickable: false
