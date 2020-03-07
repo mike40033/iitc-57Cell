@@ -2,7 +2,7 @@
 // @id             iitc-plugin-collocated-portals@57Cell
 // @name           IITC plugin: Collocated Portals
 // @category       Info
-// @version        0.2.0.20200306.091215
+// @version        0.2.1.20200307.083800
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.meta.js
 // @downloadURL    https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.user.js
@@ -37,10 +37,10 @@ data = data.replace('00h', '');
 data = data.replace('00m', '');
 return data.trim();
 };
+
 window.plugin.collocated = {
 
-    collocated_COLOR: '#ffffff',
-    collocated_MULTI_COLOR: '#ffff00',
+    collocated_COLORS: ['#ffffff','#ffff00','#ff8000','#ff0000','#ff00ff','#ff80ff'],
     STRAIGHT_LINE_COLOR: '#ffff00',
 
     SYNC_DELAY: 5000,
@@ -121,12 +121,13 @@ cleanupPortalCache: function() {
                 return;
             }
             if (dupes > 0 && !this.markedStarterPortals[guid]) {
+		var colors = window.plugin.collocated.collocated_COLORS;
                 var marker = L.circleMarker(
                     L.latLng(portal.options.data.latE6 / 1E6, portal.options.data.lngE6 / 1E6), {
-                        radius: dupes == 1 ? 25 : 35,
+                        radius: (dupes+1)*10,
                         weight: 3,
                         opacity: 1,
-                        color: dupes == 1 ? window.plugin.collocated.collocated_COLOR : window.plugin.collocated.collocated_MULTI_COLOR,
+                        color: colors[(dupes-1) % colors.length],
                         fill: true,
                         dashArray: null,
                         clickable: false
