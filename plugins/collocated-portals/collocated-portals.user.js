@@ -2,7 +2,7 @@
 // @id             iitc-plugin-collocated-portals@57Cell
 // @name           IITC plugin: Collocated Portals
 // @category       Info
-// @version        0.0.2.20200703.042945
+// @version        0.2.1.20200307.083800
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.meta.js
 // @downloadURL    https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.user.js
@@ -27,9 +27,10 @@ data = data.replace('00h', '');
 data = data.replace('00m', '');
 return data.trim();
 };
+
 window.plugin.collocated = {
 
-    collocated_COLOR: '#ffffff',
+    collocated_COLORS: ['#ffffff','#ffff00','#ff8000','#ff0000','#ff00ff','#ff80ff'],
     STRAIGHT_LINE_COLOR: '#ffff00',
 
     SYNC_DELAY: 5000,
@@ -92,35 +93,45 @@ cleanupPortalCache: function() {
         if (type === 'add' || type === 'update') {
             // Compatibility
             portal = window.portals[guid] || oldval;
-            var hasTwin = false;
+            var dupes = 0;
+            var falseTwin = false;
             for (var otherID in window.portals) {
                 if (guid === otherID) continue;
                 var otherPortal = window.portals[otherID];
                 if (portal.options.data.latE6 === otherPortal.options.data.latE6 && portal.options.data.lngE6 === otherPortal.options.data.lngE6) {
-                    hasTwin = true;
-//                } else {
-//                    if ((portal.options.data.latE6 === 0 && otherPortal.options.data.latE6 === 0)
-//                        || (portal.options.data.lngE6 === otherPortal.options.data.lngE6)) {
-//                        partnerIDs.push(otherID);
-//                    }
+                    dupes++;
+                } else if (portal.options.data.latE6 == -31950752 && portal.options.data.lngE6 == 115871288) {
+                    dupes=1;
+                    falseTwin = true;
+                } else if (portal.options.data.latE6 == -31950837 && portal.options.data.lngE6 == 115871273) {
+                    dupes=1;
                 }
-
             }
-            if (!hasTwin) {
+            if (dupes == 0) {
                 return;
             }
-            if (hasTwin && !this.markedStarterPortals[guid]) {
-                this.markedStarterPortals[guid] = L.circleMarker(
+            if (dupes > 0 && !this.markedStarterPortals[guid]) {
+		var colors = window.plugin.collocated.collocated_COLORS;
+                var marker = L.circleMarker(
                     L.latLng(portal.options.data.latE6 / 1E6, portal.options.data.lngE6 / 1E6), {
-                        radius: portal.options.radius + Math.ceil(portal.options.radius),
+                        radius: (dupes+1)*10,
                         weight: 3,
                         opacity: 1,
-                        color: window.plugin.collocated.collocated_COLOR,
+                        color: colors[(dupes-1) % colors.length],
                         fill: true,
                         dashArray: null,
                         clickable: false
                     }
                 );
+                if (falseTwin) {
+                    var div = new L.Icon({iconUrl: 'https://raw.githubusercontent.com/mike40033/iitc-57Cell/master/plugins/collocated-portals/PluginText.png',
+                                         iconAnchor: [0,0],
+                                      iconSize: [320,116],
+                                         className: 'no-pointer-events'});
+
+                    marker = new L.Marker(L.latLng(portal.options.data.latE6 / 1E6, portal.options.data.lngE6 / 1E6), {icon:div, clickable:false, keyboard:false, opacity:100});
+                }
+                this.markedStarterPortals[guid] = marker;
                 this.collocatedPortalsLayer.addLayer(this.markedStarterPortals[guid]);
             }
 
