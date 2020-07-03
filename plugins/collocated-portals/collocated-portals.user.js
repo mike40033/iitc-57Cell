@@ -7,18 +7,8 @@
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.meta.js
 // @downloadURL    https://github.com/mike40033/iitc-57Cell/raw/master/plugins/collocated-portals/collocated-portals.user.js
 // @description    Find collocated portals
-// @include        https://*.ingress.com/intel*
-// @include        http://*.ingress.com/intel*
-// @match          https://*.ingress.com/intel*
-// @match          http://*.ingress.com/intel*
-// @include        https://*.ingress.com/*
-// @include        http://*.ingress.com/*
-// @match          https://*.ingress.com/*
-// @match          http://*.ingress.com/*
-// @include        https://*.ingress.com/collcation/*
-// @include        http://*.ingress.com/mission/*
-// @match          https://*.ingress.com/mission/*
-// @match          http://*.ingress.com/mission/*
+// @include        https://intel.ingress.com/*
+// @match          https://intel.ingress.com/*
 // @grant          none
 // ==/UserScript==
 
