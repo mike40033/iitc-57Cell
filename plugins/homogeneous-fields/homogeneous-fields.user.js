@@ -1,6 +1,6 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
-// @name         Homogeneous Fields
+// @name         IITC Plugin: Homogeneous Fields
 // @version      1.0.0.20230521
 // @description  Plugin for planning HCF in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
