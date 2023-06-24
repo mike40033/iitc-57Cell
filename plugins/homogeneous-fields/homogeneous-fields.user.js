@@ -27,7 +27,7 @@
 1.1.0.20230624
 NEW: Added plugin layer and link drawings. (Heistergand)
 NEW: Added numbers to the task list
-FIX: minor code refactoring, mainly divorcing plan composing from UI drawing. 
+FIX: minor code refactoring, mainly divorcing plan composing from UI drawing.
 
 1.0.0.20230521
 NEW: Initial Release (57Cell)
@@ -514,12 +514,12 @@ function wrapper(plugin_info) {
         let planText = "";
         let keysText = "\nKeys needed:\n";
         $.each(plan, function(index, item) {
-            let pos = '${index + 1}';
+            let pos = `${index + 1}`;
             if (item.action === 'capture') {
-                planText += `${index}. Capture ${item.portal.name}\n`;
+                planText += `${pos}. Capture ${item.portal.name}\n`;
             }
             else if (item.action === 'link') {
-                planText += `${index}. Link to ${item.portal.name}\n`;
+                planText += `${pos}. Link to ${item.portal.name}\n`;
             }
             else if (item.action === 'farmkeys') {
                 keysText += `${item.portal.name}: ${item.keys}\n`;
