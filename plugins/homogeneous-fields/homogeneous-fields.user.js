@@ -26,6 +26,8 @@
 
 1.1.0.20230624
 NEW: Added plugin layer and link drawings. (Heistergand)
+NEW: Added numbers to the task list
+FIX: minor code refactoring, mainly divorcing plan composing from UI drawing. 
 
 1.0.0.20230521
 NEW: Initial Release (57Cell)
@@ -34,6 +36,7 @@ NEW: Initial Release (57Cell)
 
 
 const EARTH_RADIUS = 6371; // in km
+
 function wrapper(plugin_info) {
     if (typeof window.plugin !== 'function') window.plugin = function() {};
 
@@ -47,10 +50,12 @@ function wrapper(plugin_info) {
 
         // Convert portal to the structure expected by populatePortalData
         if (portal) {
+            let lat = parseFloat(portal.latE6 / 1e6);
+            let lng = parseFloat(portal.lngE6 / 1e6);
             return {
                 id: portalId,  // ID of the portal
                 name: portal.title,  // title of the portal
-                latLng: { lat: portal.latE6 / 1e6, lng: portal.lngE6 / 1e6 }  // coordinates of the portal in degrees
+                latLng: new L.latLng(lat,lng), // use LatLng Class to stay more flexible
             };
         }
 
@@ -83,6 +88,12 @@ function wrapper(plugin_info) {
         this.subHCFs = subHCFs;
     };
 
+    self.updateLayer = function(){
+        if (self.plan) {
+            self.drawPlan(self.plan);
+        }
+    };
+
     self.setup = function() {
         // Add button to toolbox
         $('#toolbox').append('<a onclick="window.plugin.homogeneousFields.openDialog(); return false;">Plan HCF</a>');
@@ -101,7 +112,11 @@ function wrapper(plugin_info) {
 
         self.linksLayerGroup = new L.LayerGroup();
         window.addLayerGroup('Homogenous Fields', self.linksLayerGroup, false);
-
+        window.map.on('overlayadd overlayremove', function() {
+            setTimeout(function(){
+                self.updateLayer();
+            },1);
+        });
     };
 
     self.pointInTriangle = function(pt, triangle) {
@@ -495,36 +510,78 @@ function wrapper(plugin_info) {
     };
 
 
+    self.planToText = function(plan) {
+        let planText = "";
+        let keysText = "\nKeys needed:\n";
+        $.each(plan, function(index, item) {
+            let pos = '${index + 1}';
+            if (item.action === 'capture') {
+                planText += `${index}. Capture ${item.portal.name}\n`;
+            }
+            else if (item.action === 'link') {
+                planText += `${index}. Link to ${item.portal.name}\n`;
+            }
+            else if (item.action === 'farmkeys') {
+                keysText += `${item.portal.name}: ${item.keys}\n`;
+            }
+        });
+        planText += keysText;
+        return planText;
+    }
 
-    // function to generate the final plan
-    self.generatePlan = function(portalData, path, hcfLevel) {
-        let plan = "";
 
+    // function to draw a link to the plugin layer
+    self.drawLink = function (alatlng, blatlng, style) {
+        //check if layer is active
+        if (!window.map.hasLayer(self.linksLayerGroup)) {
+            return;
+        }
+
+        var poly = L.polyline([alatlng, blatlng], style);
+        poly.addTo(self.linksLayerGroup);
+    }
+
+    // function to draw the plan to the plugin layer
+    self.drawPlan = function(plan) {
         // initialize plugin layer
         if (window.map.hasLayer(self.linksLayerGroup)) {
             self.linksLayerGroup.clearLayers();
         }
 
-        //subfunction to draw links to the plugin layer
-        function drawLink(alatlng, blatlng, style) {
-            //check if layer is active
-            if (!window.map.hasLayer(self.linksLayerGroup)) {
-                return;
+        $.each(plan, function(index,planStep) {
+            if (planStep.action === 'link') {
+                let ll_from = planStep.fromPortal.latLng, ll_to = planStep.portal.latLng;
+                self.drawLink(ll_from, ll_to, self.linkStyle);
             }
+        });
+    }
 
-            var poly = L.polyline([alatlng, blatlng], style);
-            poly.addTo(self.linksLayerGroup);
-        }
+    // function to generate the final plan
+    self.generatePlan = function(portalData, path, hcfLevel) {
 
+        let plan = [];
+
+        var stepNo = 0;
         // add the steps of the path
         for (let portalId of path) {
-            plan += `Capture ${portalData[portalId].name}\n`;
+            // plan += `Capture ${portalData[portalId].name}\n`;
+            plan.push({
+                action: 'capture',
+                stepNo: ++stepNo,
+                portal: portalData[portalId]
+            });
+
             let links = portalData[portalId].links;
             links.sort((a, b) => portalData[a].depth - portalData[b].depth);
             for (let linkId of links) {
                 if (path.indexOf(linkId) < path.indexOf(portalId)) {
-                    plan += `Link to ${portalData[linkId].name}\n`;
-                    drawLink(portalData[portalId].latLng, portalData[linkId].latLng, self.linkStyle);
+                    // plan += `Link to ${portalData[linkId].name}\n`;#
+                    plan.push({
+                        action: 'link',
+                        stepNo: ++stepNo,
+                        fromPortal: portalData[portalId],
+                        portal: portalData[linkId],
+                    });
                 }
             }
         }
@@ -533,13 +590,18 @@ function wrapper(plugin_info) {
         let keysNeeded = self.calculateKeysNeeded(portalData, path);
 
         // add the keys needed to the plan
-        plan += "\nKeys needed:\n";
+        // plan += "\nKeys needed:\n";
         let portalNames = Object.keys(portalData).map(id => portalData[id].name);
         portalNames.sort();
         let totalKeysActual = 0;
         for (let name of portalNames) {
             let portalId = Object.keys(portalData).find(id => portalData[id].name === name);
-            plan += `${name}: ${keysNeeded[portalId]}\n`;
+            //plan += `${name}: ${keysNeeded[portalId]}\n`;
+            plan.push({
+                action: 'farmkeys',
+                portal: portalData[portalId],
+                keys: keysNeeded[portalId],
+            });
             totalKeysActual += keysNeeded[portalId];
         }
 
@@ -550,7 +612,8 @@ function wrapper(plugin_info) {
         // Check if the total number of portals and keys match the expected values
         if (totalPortalsActual !== totalPortalsExpected || totalKeysActual !== totalKeysExpected) {
             console.log(hcfLevel, totalPortalsActual, totalPortalsExpected, totalKeysActual, totalKeysExpected, path, plan);
-            return 'Something went wrong. Wait for all portals to load, and try again.';
+            // return 'Something went wrong. Wait for all portals to load, and try again.';
+            return null;
         }
 
         return plan;
@@ -571,6 +634,8 @@ function wrapper(plugin_info) {
         });
         self.attachEventHandler();
     };
+
+    self.plan = null;
 
     self.attachEventHandler = function() {
         $("#find-hcf-plan").click(function() {
@@ -610,11 +675,18 @@ function wrapper(plugin_info) {
                 let shortestPath = self.findShortestPath(portalData, initialPath);
 
                 // Generate the plan
-                let plan = self.generatePlan(portalData, shortestPath, level);
-                $("#hcf-plan-text").val(plan);
+                self.plan = self.generatePlan(portalData, shortestPath, level);
+
+                if (!self.plan) {
+                    $("#hcf-plan-text").val('Something went wrong. Wait for all portals to load, and try again.');
+                } else {
+                    $("#hcf-plan-text").val(self.planToText(self.plan));
+                    self.drawPlan(self.plan);
+                }
             }
         });
     }
+
 
     self.portalSelected = function(data) {
         // Ignore if already selected
