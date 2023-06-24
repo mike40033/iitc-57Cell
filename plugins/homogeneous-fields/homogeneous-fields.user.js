@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: Homogeneous Fields
-// @version      1.0.0.20230521
+// @version      1.1.0.20230624
 // @description  Plugin for planning HCF in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -21,6 +21,17 @@
 // @match          http://*.ingress.com/mission/*
 // @grant        none
 // ==/UserScript==
+
+/** Version History
+
+1.1.0.20230624
+NEW: Added plugin layer and link drawings. (Heistergand)
+
+1.0.0.20230521
+NEW: Initial Release (57Cell)
+
+*/
+
 
 const EARTH_RADIUS = 6371; // in km
 function wrapper(plugin_info) {
@@ -50,6 +61,20 @@ function wrapper(plugin_info) {
     self.selectedPortals = [];
     self.selectedPortalDetails = [];
 
+    // layerGroup for the draws
+    self.linksLayerGroup = null;
+
+    // TODO: make linkStyle editable in options dialog
+    self.linkStyle = {
+                color: '#FF0000',
+                opacity: 1,
+                weight: 1.5,
+                clickable: false,
+                interactive: false,
+                smoothFactor: 10,
+                dashArray: [12, 5, 4, 5, 6, 5, 8, 5, "100000" ],
+            };
+
     // Add this after your global variables
     self.HCF = function(level, corners, central, subHCFs) {
         this.level = level;
@@ -73,6 +98,9 @@ function wrapper(plugin_info) {
 
         // Add event listener for portal selection
         window.addHook('portalSelected', self.portalSelected);
+
+        self.linksLayerGroup = new L.LayerGroup();
+        window.addLayerGroup('Homogenous Fields', self.linksLayerGroup, false);
 
     };
 
@@ -466,9 +494,27 @@ function wrapper(plugin_info) {
         return bestPath;
     };
 
+
+
     // function to generate the final plan
     self.generatePlan = function(portalData, path, hcfLevel) {
         let plan = "";
+
+        // initialize plugin layer
+        if (window.map.hasLayer(self.linksLayerGroup)) {
+            self.linksLayerGroup.clearLayers();
+        }
+
+        //subfunction to draw links to the plugin layer
+        function drawLink(alatlng, blatlng, style) {
+            //check if layer is active
+            if (!window.map.hasLayer(self.linksLayerGroup)) {
+                return;
+            }
+
+            var poly = L.polyline([alatlng, blatlng], style);
+            poly.addTo(self.linksLayerGroup);
+        }
 
         // add the steps of the path
         for (let portalId of path) {
@@ -478,6 +524,7 @@ function wrapper(plugin_info) {
             for (let linkId of links) {
                 if (path.indexOf(linkId) < path.indexOf(portalId)) {
                     plan += `Link to ${portalData[linkId].name}\n`;
+                    drawLink(portalData[portalId].latLng, portalData[linkId].latLng, self.linkStyle);
                 }
             }
         }
