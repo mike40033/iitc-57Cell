@@ -71,14 +71,14 @@ function wrapper(plugin_info) {
 
     // TODO: make linkStyle editable in options dialog
     self.linkStyle = {
-                color: '#FF0000',
-                opacity: 1,
-                weight: 1.5,
-                clickable: false,
-                interactive: false,
-                smoothFactor: 10,
-                dashArray: [12, 5, 4, 5, 6, 5, 8, 5, "100000" ],
-            };
+        color: '#FF0000',
+        opacity: 1,
+        weight: 1.5,
+        clickable: false,
+        interactive: false,
+        smoothFactor: 10,
+        dashArray: [12, 5, 4, 5, 6, 5, 8, 5, "100000" ],
+    };
 
     // Add this after your global variables
     self.HCF = function(level, corners, central, subHCFs) {
@@ -100,12 +100,12 @@ function wrapper(plugin_info) {
 
         // Add styles
         $('head').append('<style>' +
-            '#dialog-hcf-plan-view {' +
-            '   width: 900px;' +
-            '   height: 800px;' +
-            '   overflow-y: auto;' +
-            '}' +
-            '</style>');
+                         '#dialog-hcf-plan-view {' +
+                         '   width: 900px;' +
+                         '   height: 800px;' +
+                         '   overflow-y: auto;' +
+                         '}' +
+                         '</style>');
 
         // Add event listener for portal selection
         window.addHook('portalSelected', self.portalSelected);
@@ -259,7 +259,7 @@ function wrapper(plugin_info) {
 
     // Add this after the click event handler of "#find-hcf-plan-button"
     self.addHCFToDrawTools = function(hcf) {
-       // return;
+        // return;
         if (window.plugin.drawTools === undefined) {
             return; // skip if drawtools is not installed
         }
