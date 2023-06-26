@@ -53,8 +53,8 @@ function wrapper(plugin_info) {
             let lat = parseFloat(portal.latE6 / 1e6);
             let lng = parseFloat(portal.lngE6 / 1e6);
             return {
-                id: portalId,  // ID of the portal
-                name: portal.title,  // title of the portal
+                id: portalId, // ID of the portal
+                name: portal.title, // title of the portal
                 latLng: new L.latLng(lat,lng), // use LatLng Class to stay more flexible
             };
         }
@@ -213,7 +213,8 @@ function wrapper(plugin_info) {
         return new self.HCF(level, corners, central, subHCFs);
     };
 
-    self.findHCF = function(level, corners, portalsToConsider) {
+    async function findHCF(level, corners, portalsToConsider) {
+        // console.info('function findHCF start')
         if (level > 3) {
             console.log("In findHCF. level="+level+"  corners="+portalIdToObject(corners[0]).name+", "+ portalIdToObject(corners[1]).name+", "+ portalIdToObject(corners[2]).name);
         }
@@ -235,7 +236,7 @@ function wrapper(plugin_info) {
                 for (let i = 0; i < 3; i++) {
                     let subCorners = [corners[(i + attempt)%3], corners[(i + 1 + attempt) % 3], central];
                     let subTrianglePortals = self.getPortalsInTriangle(subCorners, portalsInTriangle);
-                    let subHCF = self.findHCF(level - 1, subCorners, subTrianglePortals);
+                    let subHCF = await findHCF(level - 1, subCorners, subTrianglePortals);
                     if (subHCF === null) {
                         // Failed to construct sub-HCF
                         // Remove all portals from the failed triangle and the central splitter from the candidates
@@ -247,6 +248,7 @@ function wrapper(plugin_info) {
                 }
 
                 if (subHCFs.length === 3) {
+                    console.info('function findHCF: Successfully constructed all sub-HCFs')
                     // Successfully constructed all sub-HCFs
                     return self.constructHCF(level, corners, central, subHCFs);
                 }
@@ -558,7 +560,7 @@ function wrapper(plugin_info) {
 
     // function to generate the final plan
     self.generatePlan = function(portalData, path, hcfLevel) {
-
+        console.info('function generatePlan start');
         let plan = [];
 
         var stepNo = 0;
@@ -615,7 +617,7 @@ function wrapper(plugin_info) {
             // return 'Something went wrong. Wait for all portals to load, and try again.';
             return null;
         }
-
+        console.info('function generatePlan: returning a plan');
         return plan;
     };
 
@@ -637,8 +639,8 @@ function wrapper(plugin_info) {
 
     self.plan = null;
 
-    self.attachEventHandler = function() {
-        $("#find-hcf-plan").click(function() {
+    self.attachEventHandler = async function() {
+        $("#find-hcf-plan").click(async function() {
             // Clear text field
             $("#hcf-plan-text").val("Please wait...");
 
@@ -652,8 +654,15 @@ function wrapper(plugin_info) {
             }
             let level = parseInt($("#layers").val());
 
+            let hcf = null;
             // Try to construct HCF
-            let hcf = self.findHCF(level, corners, null);
+            $("#hcf-plan-text").val(`Calculating ${level} layers...`);
+            try {
+                hcf = await findHCF(level, corners, null);
+            }
+            finally {
+                $("#hcf-plan-text").val("");
+            }
 
             if (hcf === null) {
                 $("#hcf-plan-text").val("No HCF found. Try fewer layers, or different portals.");
@@ -728,6 +737,9 @@ function wrapper(plugin_info) {
 
     // Add this after countKeys function
     self.distance = function(portal1, portal2) {
+        return portal1.distanceTo(portal2);
+
+        /*
         let toRadians = function(degrees) {
             return degrees * Math.PI / 180;
         };
@@ -744,20 +756,55 @@ function wrapper(plugin_info) {
         let c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
         return R * c;
+        */
     };
 
-
-
     // PLUGIN END
-}
 
+
+
+    // Add an info property for IITC's plugin system
+    var setup = self.setup;
+    setup.info = plugin_info;
+
+    // Make sure window.bootPlugins exists and is an array
+    if (!window.bootPlugins) window.bootPlugins = [];
+    // Add our startup hook
+    window.bootPlugins.push(setup);
+    // If IITC has already booted, immediately run the 'setup' function
+    if (window.iitcLoaded && typeof setup === 'function') setup();
+
+} // wrapper end
+
+/*
 // Setup wrapper, if not already done
 if (window.plugin.homogeneousFields === undefined) {
-    wrapper();
+  wrapper();
 }
 
 if (window.iitcLoaded) {
-    window.plugin.homogeneousFields.setup();
+  window.plugin.homogeneousFields.setup();
 } else {
-    window.addHook('iitcLoaded', window.plugin.homogeneousFields.setup);
+  window.addHook('iitcLoaded', window.plugin.homogeneousFields.setup);
 }
+ */
+// Create a script element to hold our content script
+var script = document.createElement('script');
+var info = {};
+
+// GM_info is defined by the assorted monkey-themed browser extensions
+// and holds information parsed from the script header.
+if (typeof GM_info !== 'undefined' && GM_info && GM_info.script) {
+    info.script = {
+        version: GM_info.script.version,
+        name: GM_info.script.name,
+        description: GM_info.script.description
+    };
+}
+
+// Create a text node and our IIFE inside of it
+var textContent = document.createTextNode('('+ wrapper +')('+ JSON.stringify(info) +')');
+// Add some content to the script element
+script.appendChild(textContent);
+// Finally, inject it... wherever.
+(document.body || document.head || document.documentElement).appendChild(script);
