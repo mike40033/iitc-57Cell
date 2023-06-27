@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: Homogeneous Fields
-// @version      1.1.0.20230624
+// @version      1.1.0.20230627
 // @description  Plugin for planning HCF in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,6 +23,11 @@
 // ==/UserScript==
 
 /** Version History
+
+1.1.0.20230627
+FIX: Some code refactoring to comply to IITC plugin framework.
+FIX: typo in layer label fixed
+TODO: async field calculation
 
 1.1.0.20230624
 NEW: Added plugin layer and link drawings. (Heistergand)
@@ -111,7 +116,7 @@ function wrapper(plugin_info) {
         window.addHook('portalSelected', self.portalSelected);
 
         self.linksLayerGroup = new L.LayerGroup();
-        window.addLayerGroup('Homogenous Fields', self.linksLayerGroup, false);
+        window.addLayerGroup('Homogeneous Fields', self.linksLayerGroup, false);
         window.map.on('overlayadd overlayremove', function() {
             setTimeout(function(){
                 self.updateLayer();
