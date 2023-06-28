@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: Homogeneous Fields
-// @version      1.1.0.20230627
+// @version      1.2.0.20230628
 // @description  Plugin for planning HCF in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -24,9 +24,12 @@
 
 /** Version History
 
-1.1.0.20230627
+1.2.0.20230628
 FIX: Some code refactoring to comply to IITC plugin framework.
 FIX: typo in layer label fixed
+NEW: improved dialog
+NEW: User can now choose to generate a geometrically perfectly balanced plan
+
 TODO: async field calculation
 
 1.1.0.20230624
@@ -218,7 +221,45 @@ function wrapper(plugin_info) {
         return new self.HCF(level, corners, central, subHCFs);
     };
 
-    async function findHCF(level, corners, portalsToConsider) {
+    /** @function calculateCentroid
+     * get the portal GUID which is nearest
+     * to the centroid point of all given GUIDs.
+     * @param {array} GUIDs List of portal GUIDs
+     */
+    self.calculateCentroid = function (GUIDs) {
+
+        let sumLat = 0.0;
+        let sumLng = 0.0;
+        let list = [];
+
+        for (let i = 0; i < GUIDs.length; i++) {
+            let ll = window.portals[GUIDs[i]].getLatLng();
+            list.push({
+                GUID: GUIDs[i],
+                ll: ll
+            });
+        }
+
+        for (let i = 0; i < list.length; i++) {
+            sumLat += list[i].ll.lat; // adds the x-coordinate
+            sumLng += list[i].ll.lng; // adds the y-coordinate
+        }
+
+        let centroid = new L.LatLng(sumLat / GUIDs.length, sumLng / GUIDs.length);
+        list.sort((a, b) => centroid.distanceTo(a.ll) - centroid.distanceTo(b.ll));
+
+        return list[0].GUID;
+    };
+
+
+
+      /**
+    * @function self.findHCF
+    * @param {int} Level
+    * @param {array} corners Array of Portal GUIDs
+    * @param {array} portalsToConsider
+    */
+    self.findHCF = function(level, corners, portalsToConsider, mode) {
         // console.info('function findHCF start')
         if (level > 3) {
             console.log("In findHCF. level="+level+"  corners="+portalIdToObject(corners[0]).name+", "+ portalIdToObject(corners[1]).name+", "+ portalIdToObject(corners[2]).name);
@@ -233,15 +274,22 @@ function wrapper(plugin_info) {
             let attempt = 0;
             while (candidates.length > 0) {
                 console.log(candidates.length+" candidate splitters to check")
-                // Choose a random central splitter
-                let centralIndex = Math.floor(Math.random() * candidates.length);
-                let central = candidates[centralIndex];
+                let central = null;
+
+                // Choose a central splitter
+
+                if (mode === 'perfect') {
+                    central = self.calculateCentroid(candidates);
+                } else {
+                    let centralIndex = Math.floor(Math.random() * candidates.length);
+                    central = candidates[centralIndex];
+                }
 
                 let subHCFs = [];
                 for (let i = 0; i < 3; i++) {
                     let subCorners = [corners[(i + attempt)%3], corners[(i + 1 + attempt) % 3], central];
                     let subTrianglePortals = self.getPortalsInTriangle(subCorners, portalsInTriangle);
-                    let subHCF = await findHCF(level - 1, subCorners, subTrianglePortals);
+                    let subHCF = self.findHCF(level - 1, subCorners, subTrianglePortals, mode);
                     if (subHCF === null) {
                         // Failed to construct sub-HCF
                         // Remove all portals from the failed triangle and the central splitter from the candidates
@@ -632,11 +680,26 @@ function wrapper(plugin_info) {
         dialog({
             title: 'HCF Plan View',
             id: 'dialog-hcf-plan-view',
-            html: '<div id="portal-details">Choose three portals</div>' +
-            '<button id="find-hcf-plan">Find HCF Plan</button>' +
-            '<label for="layers">Layers</label>' +
-            '<input type="number" id="layers" min="1" max="6" value="3">' +
-            '<textarea id="hcf-plan-text" style="height:200px;width:95%;"></textarea>',
+            html: '<div id="hcf-portal-details">Choose three portals</div>\n' +
+
+            '<fieldset style="margin: 2px;">\n'+
+            '  <legend>Options</legend>\n'+
+            '  <label for="layers">Layers: </label>\n' +
+            '  <input type="number" id="layers" min="1" max="6" value="3"><br>\n' +
+
+            '<br>'+
+            '  <label for="hcf-mode">Mode: </label>\n' +
+
+            '  <input type="radio" id="hcf-mode-random" name="hcf-mode" value="random" checked>\n' +
+            '  <label for="hcf-mode-random" title="generate a geometrically randomised plan">Random</label>\n' +
+
+            '  <input type="radio" id="hcf-mode-perfect" name="hcf-mode" value="perfect">\n' +
+            '  <label for="hcf-mode-perfect" title="generate a geometrically perfectly balanced plan">Perfect</label>\n' +
+            '<br>'+
+            '</fieldset>\n'+
+
+            '<button id="find-hcf-plan" style="margin: 2px;">Find HCF Plan</button><br>\n' +
+            '<textarea readonly id="hcf-plan-text" style="height:200px;width:98%;margin:2px"></textarea>\n',
             width: '40%'
         });
         self.attachEventHandler();
@@ -644,10 +707,13 @@ function wrapper(plugin_info) {
 
     self.plan = null;
 
-    self.attachEventHandler = async function() {
-        $("#find-hcf-plan").click(async function() {
-            // Clear text field
+    self.attachEventHandler = function() {
+        $("#find-hcf-plan").mousedown(function() {
+           // Clear text field
+            // setTimeout($("#hcf-plan-text").val("Please wait..."), 1);
             $("#hcf-plan-text").val("Please wait...");
+        });
+        $("#find-hcf-plan").click(function() {
 
             // Get selected portals and desired level
             let corners = self.selectedPortals;
@@ -658,12 +724,13 @@ function wrapper(plugin_info) {
                 return;
             }
             let level = parseInt($("#layers").val());
+            let mode = $( "input[type=radio][name=hcf-mode]:checked" ).val();
 
             let hcf = null;
             // Try to construct HCF
             $("#hcf-plan-text").val(`Calculating ${level} layers...`);
             try {
-                hcf = await findHCF(level, corners, null);
+                hcf = self.findHCF(level, corners, null, mode);
             }
             finally {
                 $("#hcf-plan-text").val("");
@@ -723,7 +790,7 @@ function wrapper(plugin_info) {
 
     self.updateDialog = function() {
         // Update portal details in dialog
-        let portalDetailsDiv = $('#portal-details');
+        let portalDetailsDiv = $('#hcf-portal-details');
         portalDetailsDiv.empty();
         portalDetailsDiv.append("<p>I'll generate an HCF plan with corners:<ul>");
         for (let portalDetails of self.selectedPortalDetails) {
