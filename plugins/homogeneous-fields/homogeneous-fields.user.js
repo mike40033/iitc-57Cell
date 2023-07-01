@@ -24,6 +24,9 @@
 
 /** Version History
 
+1.2.1.20230701
+FIX: Working with portals having the same name is no problem anymore.
+
 1.2.0.20230628
 FIX: Some code refactoring to comply to IITC plugin framework.
 FIX: typo in layer label fixed
@@ -41,9 +44,6 @@ FIX: minor code refactoring, mainly divorcing plan composing from UI drawing.
 NEW: Initial Release (57Cell)
 
 */
-
-
-const EARTH_RADIUS = 6371; // in km
 
 function wrapper(plugin_info) {
     if (typeof window.plugin !== 'function') window.plugin = function() {};
@@ -253,7 +253,7 @@ function wrapper(plugin_info) {
 
 
 
-      /**
+    /**
     * @function self.findHCF
     * @param {int} Level
     * @param {array} corners Array of Portal GUIDs
@@ -644,25 +644,19 @@ function wrapper(plugin_info) {
         // calculate the keys needed
         let keysNeeded = self.calculateKeysNeeded(portalData, path);
 
-        // add the keys needed to the plan
-        // plan += "\nKeys needed:\n";
-        let portalNames = Object.keys(portalData).map(id => portalData[id].name);
-        portalNames.sort();
         let totalKeysActual = 0;
-        for (let name of portalNames) {
-            let portalId = Object.keys(portalData).find(id => portalData[id].name === name);
-            //plan += `${name}: ${keysNeeded[portalId]}\n`;
+        $.each(portalData, function(portalId, portal) {
             plan.push({
                 action: 'farmkeys',
-                portal: portalData[portalId],
+                portal: portal,
                 keys: keysNeeded[portalId],
             });
             totalKeysActual += keysNeeded[portalId];
-        }
+        });
 
         const totalPortalsExpected = (Math.pow(3, hcfLevel-1) + 5) / 2;
         const totalKeysExpected = (Math.pow(3, hcfLevel) + 3) / 2;
-        const totalPortalsActual = portalNames.length;
+        const totalPortalsActual = path.length;
 
         // Check if the total number of portals and keys match the expected values
         if (totalPortalsActual !== totalPortalsExpected || totalKeysActual !== totalKeysExpected) {
@@ -709,7 +703,7 @@ function wrapper(plugin_info) {
 
     self.attachEventHandler = function() {
         $("#find-hcf-plan").mousedown(function() {
-           // Clear text field
+            // Clear text field
             // setTimeout($("#hcf-plan-text").val("Please wait..."), 1);
             $("#hcf-plan-text").val("Please wait...");
         });
@@ -810,30 +804,9 @@ function wrapper(plugin_info) {
     // Add this after countKeys function
     self.distance = function(portal1, portal2) {
         return portal1.distanceTo(portal2);
-
-        /*
-        let toRadians = function(degrees) {
-            return degrees * Math.PI / 180;
-        };
-
-        let R = 6371e3; // metres
-        let φ1 = toRadians(portal1.lat);
-        let φ2 = toRadians(portal2.lat);
-        let Δφ = toRadians(portal2.lat - portal1.lat);
-        let Δλ = toRadians(portal2.lng - portal1.lng);
-
-        let a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-        let c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-        return R * c;
-        */
     };
 
     // PLUGIN END
-
-
 
     // Add an info property for IITC's plugin system
     var setup = self.setup;
@@ -848,18 +821,7 @@ function wrapper(plugin_info) {
 
 } // wrapper end
 
-/*
-// Setup wrapper, if not already done
-if (window.plugin.homogeneousFields === undefined) {
-  wrapper();
-}
 
-if (window.iitcLoaded) {
-  window.plugin.homogeneousFields.setup();
-} else {
-  window.addHook('iitcLoaded', window.plugin.homogeneousFields.setup);
-}
- */
 // Create a script element to hold our content script
 var script = document.createElement('script');
 var info = {};
