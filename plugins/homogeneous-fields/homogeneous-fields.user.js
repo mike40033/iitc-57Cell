@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: Homogeneous Fields
-// @version      1.2.0.20230628
+// @version      1.2.1.20230701
 // @description  Plugin for planning HCF in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -24,6 +24,10 @@
 
 /** Version History
 
+1.2.1.20230701
+FIX: Working with portals having the same name is no problem anymore.
+NEW: Export to DrawTools
+
 1.2.0.20230628
 FIX: Some code refactoring to comply to IITC plugin framework.
 FIX: typo in layer label fixed
@@ -41,9 +45,6 @@ FIX: minor code refactoring, mainly divorcing plan composing from UI drawing.
 NEW: Initial Release (57Cell)
 
 */
-
-
-const EARTH_RADIUS = 6371; // in km
 
 function wrapper(plugin_info) {
     if (typeof window.plugin !== 'function') window.plugin = function() {};
@@ -76,6 +77,7 @@ function wrapper(plugin_info) {
 
     // layerGroup for the draws
     self.linksLayerGroup = null;
+    self.fieldLayerGroup = null;
 
     // TODO: make linkStyle editable in options dialog
     self.linkStyle = {
@@ -120,6 +122,9 @@ function wrapper(plugin_info) {
 
         self.linksLayerGroup = new L.LayerGroup();
         window.addLayerGroup('Homogeneous Fields', self.linksLayerGroup, false);
+        // window.addLayerGroup('Homogeneous CF Links', self.linksLayerGroup, false);
+        // window.addLayerGroup('Homogeneous CF Fields', self.fieldLayerGroup, false);
+
         window.map.on('overlayadd overlayremove', function() {
             setTimeout(function(){
                 self.updateLayer();
@@ -253,7 +258,7 @@ function wrapper(plugin_info) {
 
 
 
-      /**
+    /**
     * @function self.findHCF
     * @param {int} Level
     * @param {array} corners Array of Portal GUIDs
@@ -594,6 +599,29 @@ function wrapper(plugin_info) {
 
         var poly = L.polyline([alatlng, blatlng], style);
         poly.addTo(self.linksLayerGroup);
+
+    }
+
+    self.exportDrawtoolsLink = function(p1, p2) {
+        let alatlng = p1.latLng;
+        let blatlng = p2.latLng;
+        let layer = L.geodesicPolyline([alatlng, blatlng], window.plugin.drawTools.lineOptions);
+        window.plugin.drawTools.drawnItems.addLayer(layer);
+        window.plugin.drawTools.save();
+
+    }
+
+
+    // TODO function to draw a field to the plugin layer
+    self.drawField = function (alatlng, blatlng, clatlng, style) {
+        //check if layer is active
+        if (!window.map.hasLayer(self.fieldLayerGroup)) {
+            return;
+        }
+
+        var poly = L.polygon([alatlng, blatlng, clatlng], style);
+        poly.addTo(self.fieldLayerGroup);
+
     }
 
     // function to draw the plan to the plugin layer
@@ -608,11 +636,91 @@ function wrapper(plugin_info) {
                 let ll_from = planStep.fromPortal.latLng, ll_to = planStep.portal.latLng;
                 self.drawLink(ll_from, ll_to, self.linkStyle);
             }
+            if (planStep.action === 'field') {
+                self.drawField(planStep.corners, self.fieldStyle);
+            }
         });
+    }
+
+    // function to export and draw the plan to the drawtools plugin layer
+    self.exportToDrawtools = function(plan) {
+        // initialize plugin layer
+        if (window.plugin.drawTools !== 'undefined') {
+            $.each(plan, function(index, planStep) {
+                if (planStep.action === 'link') {
+                    self.exportDrawtoolsLink(planStep.fromPortal, planStep.portal);
+                }
+            });
+        }
+    }
+
+    // function to add a link to the arc plugin
+    self.drawArc = function (p1, p2) {
+        if(typeof window.plugin.arcs != 'undefined') {
+            window.selectedPortal = p1.id;
+            window.plugin.arcs.draw();
+            window.selectedPortal = p2.id;
+            window.plugin.arcs.draw();
+        }
+    }
+
+
+    // function to export the plan to the arc plugin
+    self.drawArcPlan = function(plan) {
+        // initialize plugin layer
+        if(typeof window.plugin.arcs !== 'undefined') {
+            $.each(plan, function(index, planStep) {
+                if (planStep.action === 'link') {
+                    self.drawArc(planStep.fromPortal, planStep.portal);
+                }
+            });
+        }
     }
 
     // function to generate the final plan
     self.generatePlan = function(portalData, path, hcfLevel) {
+
+        let allLinks = [];
+        const isNewField = function(knownLinks, newLink) {
+
+            if (true) {
+                return false;
+            };
+
+            // TODO:
+
+            /**
+              * @param list {array} LIst of links
+              * @param a {point} Point for a portal
+              */
+            const getThirds = function(list, a, b) {
+                var i,k;
+                var linksOnA = [], linksOnB = [], result = [];
+                for (i in list) {
+                    let ll_a = list[i].a.latLng;
+                    let ll_b = list[i].b.latLng;
+
+                    if ((ll_a.equals(a.latLng) && ll_b.equals(b.latLng)) || (ll_a.equals(b.latLng) && ll_b.equals(a.latLng))) {
+                        // link in list equals tested link
+                        continue;
+                    }
+                    if (ll_a.equals(a.latLng) || ll_b.equals(a.latLng)) linksOnA.push(list[i]);
+                    if (ll_a.equals(b.latLng) || ll_b.equals(b.latLng)) linksOnB.push(list[i]);
+                }
+                for (i in linksOnA) {
+                    for (k in linksOnB) {
+                        if (linksOnA[i].a.latLng.equals(linksOnB[k].a.latLng) || linksOnA[i].a.latLng.equals(linksOnB[k].b.latLng) )
+                            result.push(linksOnA[i].a);
+                        if (linksOnA[i].b.latLng.equals(linksOnB[k].a.latLng) || linksOnA[i].b.latLng.equals(linksOnB[k].b.latLng))
+                            result.push(linksOnA[i].b);
+                    }
+                }
+                return result;
+            }; // end getThirds
+
+            return getThirds(knownLinks, newLink.fromPortal, newLink.toPortal);
+        }; // end isNewField
+
         console.info('function generatePlan start');
         let plan = [];
 
@@ -637,6 +745,18 @@ function wrapper(plugin_info) {
                         fromPortal: portalData[portalId],
                         portal: portalData[linkId],
                     });
+                    if (isNewField(allLinks, {
+                        fromPortal: portalData[portalId],
+                        toPortal: portalData[linkId],
+                        guid: linkId,
+                    })) {
+                        plan.push({
+                            action: 'field',
+                            stepNo: stepNo,
+                            fromPortal: portalData[portalId],
+                            portal: portalData[linkId],
+                        });
+                    };
                 }
             }
         }
@@ -644,25 +764,19 @@ function wrapper(plugin_info) {
         // calculate the keys needed
         let keysNeeded = self.calculateKeysNeeded(portalData, path);
 
-        // add the keys needed to the plan
-        // plan += "\nKeys needed:\n";
-        let portalNames = Object.keys(portalData).map(id => portalData[id].name);
-        portalNames.sort();
         let totalKeysActual = 0;
-        for (let name of portalNames) {
-            let portalId = Object.keys(portalData).find(id => portalData[id].name === name);
-            //plan += `${name}: ${keysNeeded[portalId]}\n`;
+        $.each(portalData, function(portalId, portal) {
             plan.push({
                 action: 'farmkeys',
-                portal: portalData[portalId],
+                portal: portal,
                 keys: keysNeeded[portalId],
             });
             totalKeysActual += keysNeeded[portalId];
-        }
+        });
 
         const totalPortalsExpected = (Math.pow(3, hcfLevel-1) + 5) / 2;
         const totalKeysExpected = (Math.pow(3, hcfLevel) + 3) / 2;
-        const totalPortalsActual = portalNames.length;
+        const totalPortalsActual = path.length;
 
         // Check if the total number of portals and keys match the expected values
         if (totalPortalsActual !== totalPortalsExpected || totalKeysActual !== totalKeysExpected) {
@@ -670,7 +784,7 @@ function wrapper(plugin_info) {
             // return 'Something went wrong. Wait for all portals to load, and try again.';
             return null;
         }
-        console.info('function generatePlan: returning a plan');
+        // console.info('function generatePlan: returning a plan');
         return plan;
     };
 
@@ -698,7 +812,10 @@ function wrapper(plugin_info) {
             '<br>'+
             '</fieldset>\n'+
 
-            '<button id="find-hcf-plan" style="margin: 2px;">Find HCF Plan</button><br>\n' +
+            '<button id="find-hcf-plan" style="margin: 2px;">Find HCF Plan</button>'+
+            '<button id="hcf-to-dt-btn" hidden>Export to DrawTools</button>'+
+            '<button id="hcf-to-arc-btn" hidden>Export to Arc</button>'+
+            '<br>\n' +
             '<textarea readonly id="hcf-plan-text" style="height:200px;width:98%;margin:2px"></textarea>\n',
             width: '40%'
         });
@@ -708,11 +825,21 @@ function wrapper(plugin_info) {
     self.plan = null;
 
     self.attachEventHandler = function() {
+        $("#hcf-to-arc-btn").click(function() {
+            self.drawArcPlan(self.plan);
+            window.plugin.arcs.list();
+        });
+
+        $("#hcf-to-dt-btn").click(function() {
+            self.exportToDrawtools(self.plan);
+        });
+
         $("#find-hcf-plan").mousedown(function() {
-           // Clear text field
+            // Clear text field
             // setTimeout($("#hcf-plan-text").val("Please wait..."), 1);
             $("#hcf-plan-text").val("Please wait...");
         });
+
         $("#find-hcf-plan").click(function() {
 
             // Get selected portals and desired level
@@ -739,7 +866,7 @@ function wrapper(plugin_info) {
             if (hcf === null) {
                 $("#hcf-plan-text").val("No HCF found. Try fewer layers, or different portals.");
             } else {
-                self.addHCFToDrawTools(hcf);
+                // self.addHCFToDrawTools(hcf);
 
                 // Generate portal data
                 let portalData = self.generatePortalData(hcf);
@@ -756,6 +883,7 @@ function wrapper(plugin_info) {
                 let shortestPath = self.findShortestPath(portalData, initialPath);
 
                 // Generate the plan
+                self.plan = null;
                 self.plan = self.generatePlan(portalData, shortestPath, level);
 
                 if (!self.plan) {
@@ -763,6 +891,15 @@ function wrapper(plugin_info) {
                 } else {
                     $("#hcf-plan-text").val(self.planToText(self.plan));
                     self.drawPlan(self.plan);
+
+                    if(typeof window.plugin.drawTools !== 'undefined') {
+                        $("#hcf-to-dt-btn").show();
+                    };
+
+                    // don't tell anyone:
+                    if(typeof window.plugin.arcs !== 'undefined' && false ) {
+                        $("#hcf-to-arc-btn").show();
+                    };
                 }
             }
         });
@@ -810,25 +947,6 @@ function wrapper(plugin_info) {
     // Add this after countKeys function
     self.distance = function(portal1, portal2) {
         return portal1.distanceTo(portal2);
-
-        /*
-        let toRadians = function(degrees) {
-            return degrees * Math.PI / 180;
-        };
-
-        let R = 6371e3; // metres
-        let φ1 = toRadians(portal1.lat);
-        let φ2 = toRadians(portal2.lat);
-        let Δφ = toRadians(portal2.lat - portal1.lat);
-        let Δλ = toRadians(portal2.lng - portal1.lng);
-
-        let a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-        let c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-        return R * c;
-        */
     };
 
     // PLUGIN END
