@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: Homogeneous Fields
-// @version      1.2.1.20230701
+// @version      1.2.2.20230715
 // @description  Plugin for planning HCF in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,6 +23,9 @@
 // ==/UserScript==
 
 /** Version History
+
+1.2.2.20230715
+FIX: Sporadic failure to find an HCF when one exists (Issue #11)
 
 1.2.1.20230701
 FIX: Working with portals having the same name is no problem anymore.
@@ -256,7 +259,7 @@ function wrapper(plugin_info) {
         return list[0].GUID;
     };
 
-
+    
 
     /**
     * @function self.findHCF
@@ -266,19 +269,18 @@ function wrapper(plugin_info) {
     */
     self.findHCF = function(level, corners, portalsToConsider, mode) {
         // console.info('function findHCF start')
-        if (level > 3) {
-            console.log("In findHCF. level="+level+"  corners="+portalIdToObject(corners[0]).name+", "+ portalIdToObject(corners[1]).name+", "+ portalIdToObject(corners[2]).name);
-        }
         if (level === 1) {
             // Base case: return a level 1 HCF
             return self.constructHCF(level, corners, null, []);
         }
         if (level > 1) {
+            let portalsNeeded = [-1,0,1,4,13,40,121];
             let portalsInTriangle = self.getPortalsInTriangle(corners, portalsToConsider);
+            if (portalsInTriangle.length < portalsNeeded[level]) // not enough portals, fail immediately
+                return null;
             let candidates = Array.from(portalsInTriangle);  // create a copy of portalsInTriangle
             let attempt = 0;
             while (candidates.length > 0) {
-                console.log(candidates.length+" candidate splitters to check")
                 let central = null;
 
                 // Choose a central splitter
@@ -294,19 +296,24 @@ function wrapper(plugin_info) {
                 for (let i = 0; i < 3; i++) {
                     let subCorners = [corners[(i + attempt)%3], corners[(i + 1 + attempt) % 3], central];
                     let subTrianglePortals = self.getPortalsInTriangle(subCorners, portalsInTriangle);
-                    let subHCF = self.findHCF(level - 1, subCorners, subTrianglePortals, mode);
+                    let insufficientPortals = subTrianglePortals.length < portalsNeeded[level-1];
+                    let subHCF = insufficientPortals ? null : self.findHCF(level - 1, subCorners, subTrianglePortals, mode);
                     if (subHCF === null) {
                         // Failed to construct sub-HCF
-                        // Remove all portals from the failed triangle and the central splitter from the candidates
-                        candidates = candidates.filter(portal => !subTrianglePortals.includes(portal) && portal !== central);
-                        attempt++;
+                        if (insufficientPortals) {
+                            // Remove all portals from the failed triangle and the central splitter from the candidates
+                            candidates = candidates.filter(portal => !subTrianglePortals.includes(portal) && portal !== central);
+                            attempt++;
+                        } else {
+                            // Remove just the failed central splitter (see Issue 11)
+                            candidates = candidates.filter(portal => portal !== central);
+                        }
                         break;
-                    }
+                    } 
                     subHCFs.push(subHCF);
                 }
 
                 if (subHCFs.length === 3) {
-                    console.info('function findHCF: Successfully constructed all sub-HCFs')
                     // Successfully constructed all sub-HCFs
                     return self.constructHCF(level, corners, central, subHCFs);
                 }
