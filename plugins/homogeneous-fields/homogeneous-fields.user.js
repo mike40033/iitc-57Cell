@@ -1,8 +1,8 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
-// @name         IITC Plugin: Homogeneous Fields
-// @version      1.2.3.20230723
-// @description  Plugin for planning HCF in IITC
+// @name         IITC Plugin: 57Cell's Field Planner
+// @version      2.0.0.20230723
+// @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/homogeneous-fields/homogeneous-fields.meta.js
@@ -24,27 +24,31 @@
 
 /** Version History
 
+2.0.0.20230723
+NEW: Add an option for general maximum fielding (57Cell)
+NEW: change name of plugin and UI text (57Cell)
+
 1.2.3.20230723
-NEW: Number of softbanks is noted for portals that need them
+NEW: Number of softbanks is noted for portals that need them (57Cell)
 
 1.2.2.20230715
 FIX: Sporadic failure to find an HCF when one exists (Issue #11)
 
 1.2.1.20230701
 FIX: Working with portals having the same name is no problem anymore.
-NEW: Export to DrawTools
+NEW: Export to DrawTools (Heistergand)
 
 1.2.0.20230628
 FIX: Some code refactoring to comply to IITC plugin framework.
 FIX: typo in layer label fixed
-NEW: improved dialog
+NEW: improved dialog (Heistergand)
 NEW: User can now choose to generate a geometrically perfectly balanced plan
 
 TODO: async field calculation
 
 1.1.0.20230624
 NEW: Added plugin layer and link drawings. (Heistergand)
-NEW: Added numbers to the task list
+NEW: Added numbers to the task list (Heistergand)
 FIX: minor code refactoring, mainly divorcing plan composing from UI drawing.
 
 1.0.0.20230521
@@ -112,7 +116,7 @@ function wrapper(plugin_info) {
 
     self.setup = function() {
         // Add button to toolbox
-        $('#toolbox').append('<a onclick="window.plugin.homogeneousFields.openDialog(); return false;">Plan HCF</a>');
+        $('#toolbox').append('<a onclick="window.plugin.homogeneousFields.openDialog(); return false;">Plan Fields</a>');
 
         // Add styles
         $('head').append('<style>' +
@@ -127,7 +131,7 @@ function wrapper(plugin_info) {
         window.addHook('portalSelected', self.portalSelected);
 
         self.linksLayerGroup = new L.LayerGroup();
-        window.addLayerGroup('Homogeneous Fields', self.linksLayerGroup, false);
+        window.addLayerGroup('Fielding Plan', self.linksLayerGroup, false);
         // window.addLayerGroup('Homogeneous CF Links', self.linksLayerGroup, false);
         // window.addLayerGroup('Homogeneous CF Fields', self.fieldLayerGroup, false);
 
@@ -270,16 +274,16 @@ function wrapper(plugin_info) {
     * @param {array} corners Array of Portal GUIDs
     * @param {array} portalsToConsider
     */
-    self.findHCF = function(level, corners, portalsToConsider, mode) {
+    self.findHCF = function(level, corners, portalsToConsider, mode, fieldType) {
         // console.info('function findHCF start')
-        if (level === 1) {
+        let portalsInTriangle = self.getPortalsInTriangle(corners, portalsToConsider);
+        if ((level === 1 && fieldType == 'hcf') || (fieldType == 'general' && portalsInTriangle.length == 0)) {
             // Base case: return a level 1 HCF
             return self.constructHCF(level, corners, null, []);
         }
         if (level > 1) {
             let portalsNeeded = [-1,0,1,4,13,40,121];
-            let portalsInTriangle = self.getPortalsInTriangle(corners, portalsToConsider);
-            if (portalsInTriangle.length < portalsNeeded[level]) // not enough portals, fail immediately
+            if (fieldType == 'hcf' && portalsInTriangle.length < portalsNeeded[level]) // not enough portals, fail immediately
                 return null;
             let candidates = Array.from(portalsInTriangle);  // create a copy of portalsInTriangle
             let attempt = 0;
@@ -300,8 +304,8 @@ function wrapper(plugin_info) {
                     let subCorners = [corners[(i + attempt)%3], corners[(i + 1 + attempt) % 3], central];
                     let subTrianglePortals = self.getPortalsInTriangle(subCorners, portalsInTriangle);
                     let insufficientPortals = subTrianglePortals.length < portalsNeeded[level-1];
-                    let subHCF = insufficientPortals ? null : self.findHCF(level - 1, subCorners, subTrianglePortals, mode);
-                    if (subHCF === null) {
+                    let subHCF = fieldType == 'hcf' && insufficientPortals ? null : self.findHCF(fieldType == 'hcf' ? level - 1 : level, subCorners, subTrianglePortals, mode, fieldType);
+                    if (fieldType == 'hcf' && subHCF === null) {
                         // Failed to construct sub-HCF
                         if (insufficientPortals) {
                             // Remove all portals from the failed triangle and the central splitter from the candidates
@@ -471,9 +475,11 @@ function wrapper(plugin_info) {
     };
 
     // optimization algorithm to find the shortest path
-    self.findShortestPath = function(portalData, path) {
+    self.findShortestPath = function(portalData, path, fieldType) {
         let disallowMatryoska = true; // TODO: make this a UI element
         let maxOutgoingLinksPermitted = 40; // TODO: put this in the UI
+        let initialOutgoingLinks = self.countOutgoingLinks(path, portalData);
+        let leastMaxOutgoingLinks = Math.max(...Object.values(initialOutgoingLinks))
         let bestPath = path.slice();
         let bestLength = self.calculatePathLength(portalData, bestPath);
 
@@ -514,7 +520,16 @@ function wrapper(plugin_info) {
             let newLength = self.calculatePathLength(portalData, newPath);
             let outgoingLinks = self.countOutgoingLinks(newPath, portalData);
             let maxLinks = Math.max(...Object.values(outgoingLinks));
-            if (newLength < bestLength && (!disallowMatryoska || !self.requiresMatryoskaLinks(portalData, newPath)) && maxLinks <= maxOutgoingLinksPermitted) {
+            if (maxLinks < leastMaxOutgoingLinks) {
+                leastMaxOutgoingLinks = maxLinks;
+            }
+            // keep the path if all of the following are true:
+            // (a) it's shorter, 
+            // (b) it doesn't need Matryoska links OR Matryoska links are allowed, 
+            // (c) it doesn't exceed outgoing link limits, unless we haven't been able to meet those limits
+            if (newLength < bestLength 
+                  && (!disallowMatryoska || !self.requiresMatryoskaLinks(portalData, newPath)) 
+                  && maxLinks <= Math.max(maxOutgoingLinksPermitted, leastMaxOutgoingLinks)) { 
                 bestPath = newPath;
                 bestLength = newLength;
             }
@@ -525,7 +540,12 @@ function wrapper(plugin_info) {
 
 
     self.planToText = function(plan) {
+        let maxSBUL = plan.reduce((max, item) => Math.max(max, item.sbul || 0), 0);        
         let planText = "";
+        if (maxSBUL > 4) 
+            return "Sadly, the best plan I found still needs "+maxSBUL+" softbanks on at least one portal. If you want me to try again, click 'Find Fielding Plan' again."
+        if (maxSBUL > 2) 
+            planText = "Warning: this plan can't be done solo. One of its portals needs "+maxSBUL+" softbanks.\n\n"        
         let keysText = "\nKeys needed:\n";
         $.each(plan, function(index, item) {
             let pos = `${index + 1}`;
@@ -633,7 +653,7 @@ function wrapper(plugin_info) {
     }
 
     // function to generate the final plan
-    self.generatePlan = function(portalData, path, hcfLevel) {
+    self.generatePlan = function(portalData, path, hcfLevel, fieldType) {
 
         let allLinks = [];
         const isNewField = function(knownLinks, newLink) {
@@ -729,15 +749,16 @@ function wrapper(plugin_info) {
             totalKeysActual += keysNeeded[portalId];
         });
 
-        const totalPortalsExpected = (Math.pow(3, hcfLevel-1) + 5) / 2;
-        const totalKeysExpected = (Math.pow(3, hcfLevel) + 3) / 2;
-        const totalPortalsActual = path.length;
-
-        // Check if the total number of portals and keys match the expected values
-        if (totalPortalsActual !== totalPortalsExpected || totalKeysActual !== totalKeysExpected) {
-            console.log(hcfLevel, totalPortalsActual, totalPortalsExpected, totalKeysActual, totalKeysExpected, path, plan);
-            // return 'Something went wrong. Wait for all portals to load, and try again.';
-            return null;
+        if (fieldType == 'hcf') {
+            const totalPortalsExpected = (Math.pow(3, hcfLevel-1) + 5) / 2;
+            const totalKeysExpected = (Math.pow(3, hcfLevel) + 3) / 2;
+            const totalPortalsActual = path.length;
+            // Check if the total number of portals and keys match the expected values
+            if (totalPortalsActual !== totalPortalsExpected || totalKeysActual !== totalKeysExpected) {
+                console.log(hcfLevel, totalPortalsActual, totalPortalsExpected, totalKeysActual, totalKeysExpected, path, plan);
+                // return 'Something went wrong. Wait for all portals to load, and try again.';
+                return null;
+            }
         }
         return plan;
     };
@@ -746,27 +767,31 @@ function wrapper(plugin_info) {
     // Attach click event to find-hcf-plan-button after the dialog is created
     self.openDialog = function() {
         dialog({
-            title: 'HCF Plan View',
+            title: 'Fielding Plan View',
             id: 'dialog-hcf-plan-view',
             html: '<div id="hcf-portal-details">Choose three portals</div>\n' +
 
             '<fieldset style="margin: 2px;">\n'+
-            '  <legend>Options</legend>\n'+
-            '  <label for="layers">Layers: </label>\n' +
-            '  <input type="number" id="layers" min="1" max="6" value="3"><br>\n' +
-
+            '<legend>Options</legend>\n'+
+            '  <label for="field-type">Field type: </label>\n' +
+            '  <input type="radio" id="field-type-hcf" name="field-type" value="hcf" checked>\n' +
+            '  <label for="field-type-hcf" title="generate a homogeneous fielding plan">Homogeneous Fields</label>\n' +
+            '  <input type="radio" id="field-type-general" name="field-type" value="general">\n' +
+            '  <label for="field-type-general" title="generate a general maximum fielding plan">General Maximum Fielding</label>\n' +
             '<br>'+
-            '  <label for="hcf-mode">Mode: </label>\n' +
-
+            '  <label for="hcf-mode">Geometry: </label>\n' +
             '  <input type="radio" id="hcf-mode-random" name="hcf-mode" value="random" checked>\n' +
             '  <label for="hcf-mode-random" title="generate a geometrically randomised plan">Random</label>\n' +
-
             '  <input type="radio" id="hcf-mode-perfect" name="hcf-mode" value="perfect">\n' +
             '  <label for="hcf-mode-perfect" title="generate a geometrically perfectly balanced plan">Perfect</label>\n' +
             '<br>'+
-            '</fieldset>\n'+
+            '  <div id="layers-container">\n' +
+            '    <label for="layers">Layers: </label>\n' +
+            '    <input type="number" id="layers" min="1" max="6" value="3"><br>\n' +
+            '  </div>\n' +
+            '</fieldset>\n' +
 
-            '<button id="find-hcf-plan" style="margin: 2px;">Find HCF Plan</button>'+
+            '<button id="find-hcf-plan" style="margin: 2px;">Find Fielding Plan</button>'+
             '<button id="hcf-to-dt-btn" hidden>Export to DrawTools</button>'+
             '<button id="hcf-to-arc-btn" hidden>Export to Arc</button>'+
             '<br>\n' +
@@ -784,6 +809,18 @@ function wrapper(plugin_info) {
             window.plugin.arcs.list();
         });
 
+        $("#field-type-general").change(function() {
+            if ($(this).is(":checked")) {
+                $("#layers-container").css("display", "none");
+            }
+        });
+        
+        $("#field-type-hcf").change(function() {
+            if ($(this).is(":checked")) {
+                $("#layers-container").css("display", "block");
+            }
+        });
+        
         $("#hcf-to-dt-btn").click(function() {
             self.exportToDrawtools(self.plan);
         });
@@ -806,12 +843,13 @@ function wrapper(plugin_info) {
             }
             let level = parseInt($("#layers").val());
             let mode = $( "input[type=radio][name=hcf-mode]:checked" ).val();
+            let fieldType = $( "input[type=radio][name=field-type]:checked" ).val();
 
             let hcf = null;
             // Try to construct HCF
             $("#hcf-plan-text").val(`Calculating ${level} layers...`);
             try {
-                hcf = self.findHCF(level, corners, null, mode);
+                hcf = self.findHCF(level, corners, null, mode, fieldType);
             }
             finally {
                 $("#hcf-plan-text").val("");
@@ -832,11 +870,11 @@ function wrapper(plugin_info) {
                 }); // the "sweep" method: see https://youtu.be/iH0JMfR7BTI
 
                 // Find a shorter path
-                let shortestPath = self.findShortestPath(portalData, initialPath);
+                let shortestPath = self.findShortestPath(portalData, initialPath, fieldType);
 
                 // Generate the plan
                 self.plan = null;
-                self.plan = self.generatePlan(portalData, shortestPath, level);
+                self.plan = self.generatePlan(portalData, shortestPath, level, fieldType);
 
                 if (!self.plan) {
                     $("#hcf-plan-text").val('Something went wrong. Wait for all portals to load, and try again.');
@@ -881,7 +919,7 @@ function wrapper(plugin_info) {
         // Update portal details in dialog
         let portalDetailsDiv = $('#hcf-portal-details');
         portalDetailsDiv.empty();
-        portalDetailsDiv.append("<p>I'll generate an HCF plan with corners:<ul>");
+        portalDetailsDiv.append("<p>I'll generate a fielding plan with corners:<ul>");
         for (let portalDetails of self.selectedPortalDetails) {
             portalDetailsDiv.append('<li>' + portalDetails.title + '</li>');
         }

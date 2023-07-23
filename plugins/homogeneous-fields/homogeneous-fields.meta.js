@@ -1,8 +1,8 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
-// @name         IITC Plugin: Homogeneous Fields
-// @version      1.2.3.20230723
-// @description  Plugin for planning HCF in IITC
+// @name         IITC Plugin: 57Cell's Field Planner
+// @version      2.0.0.20230723
+// @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/homogeneous-fields/homogeneous-fields.meta.js
