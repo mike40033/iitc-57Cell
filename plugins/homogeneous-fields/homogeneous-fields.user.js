@@ -26,8 +26,8 @@
 
 2.0.1.20230723
 NEW: Add field drawing layer (Heistergand)
-NEW: Created Control Fields are mentioned in the plan
-NEW: Add Statistics output
+NEW: Created Control Fields are mentioned in the plan (Heistergand)
+NEW: Add Statistics output (Heistergand)
 
 2.0.0.20230723
 NEW: Add an option for general maximum fielding (57Cell)
