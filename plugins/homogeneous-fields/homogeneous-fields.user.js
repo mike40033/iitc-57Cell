@@ -24,6 +24,9 @@
 
 /** Version History
 
+1.2.3.20230723
+NEW: Number of softbanks is noted for portals that need them
+
 1.2.2.20230715
 FIX: Sporadic failure to find an HCF when one exists (Issue #11)
 
@@ -323,62 +326,6 @@ function wrapper(plugin_info) {
         }
     };
 
-
-    // Add this after the click event handler of "#find-hcf-plan-button"
-    self.addHCFToDrawTools = function(hcf) {
-        // return;
-        if (window.plugin.drawTools === undefined) {
-            return; // skip if drawtools is not installed
-        }
-        // TODO get this working
-        /*
-        // Add corner markers
-        for (let corner of hcf.corners) {
-            let cornerPortal = portalIdToObject(corner);
-            let marker = new L.Marker(cornerPortal.latLng, {
-                title: cornerPortal.name,
-                icon: L.Icon.Default,
-                zIndexOffset: 1000
-            });
-            window.plugin.drawTools.drawnItems.addLayer(marker);
-        }
-
-        // Add central marker (if any)
-        if (hcf.central !== null) {
-            let centralPortal = portalIdToObject(hcf.central);
-            let marker = new L.Marker(centralPortal.latLng, {
-                title: centralPortal.name,
-                icon: L.Icon.Default,
-                zIndexOffset: 1000
-            });
-            window.plugin.drawTools.drawnItems.addLayer(marker);
-        }
-
-        // Add links
-        for (let corner1 of hcf.corners) {
-            let portal1 = portalIdToObject(corner1);
-            for (let corner2 of hcf.corners) {
-                if (corner1 !== corner2) {
-                    let portal2 = portalIdToObject(corner2);
-                    let line = L.geodesicPolyline([portal1.latLng, portal2.latLng], {color: 'red'});
-                    window.plugin.drawTools.drawnItems.addLayer(line);
-                }
-            }
-            if (hcf.central !== null) {
-                let portalC = portalIdToObject(hcf.central);
-                let line = L.geodesicPolyline([portal1.latLng, portalC.latLng], {color: 'magenta'});
-                window.plugin.drawTools.drawnItems.addLayer(line);
-            }
-        }
-        window.plugin.drawTools.save();
-
-        // Recursively add sub-HCFs
-        for (let subHCF of hcf.subHCFs) {
-            self.addHCFToDrawTools(subHCF);
-        }
-        */
-    };
-
     // helper function to recursively populate the portal data structure
     function populatePortalData(portalData, hcf, depth) {
         // add corner portals
@@ -583,7 +530,8 @@ function wrapper(plugin_info) {
         $.each(plan, function(index, item) {
             let pos = `${index + 1}`;
             if (item.action === 'capture') {
-                planText += `${pos}. Capture ${item.portal.name}\n`;
+                sbulText = item.sbul === 0 ? "" : ` (${item.sbul} Softbank${(item.sbul == 1 ? "" : "s")})`;
+                planText += `${pos}. Capture ${item.portal.name}${sbulText}\n`;
             }
             else if (item.action === 'link') {
                 planText += `${pos}. Link to ${item.portal.name}\n`;
@@ -694,10 +642,8 @@ function wrapper(plugin_info) {
                 return false;
             };
 
-            // TODO:
-
             /**
-              * @param list {array} LIst of links
+              * @param list {array} List of links
               * @param a {point} Point for a portal
               */
             const getThirds = function(list, a, b) {
@@ -728,43 +674,45 @@ function wrapper(plugin_info) {
             return getThirds(knownLinks, newLink.fromPortal, newLink.toPortal);
         }; // end isNewField
 
-        console.info('function generatePlan start');
         let plan = [];
 
         var stepNo = 0;
         // add the steps of the path
         for (let portalId of path) {
             // plan += `Capture ${portalData[portalId].name}\n`;
+            let links = portalData[portalId].links;
+            links.sort((a, b) => portalData[a].depth - portalData[b].depth);
+            // calculate outgoing links and count softbanks
+            outgoingLinks = links.filter(linkId => path.indexOf(linkId) < path.indexOf(portalId));
+            sbul = outgoingLinks.length <= 8 ? 0 : Math.floor((outgoingLinks.length-1)/8);
+
             plan.push({
                 action: 'capture',
                 stepNo: ++stepNo,
-                portal: portalData[portalId]
+                portal: portalData[portalId],
+                sbul: sbul
             });
 
-            let links = portalData[portalId].links;
-            links.sort((a, b) => portalData[a].depth - portalData[b].depth);
-            for (let linkId of links) {
-                if (path.indexOf(linkId) < path.indexOf(portalId)) {
-                    // plan += `Link to ${portalData[linkId].name}\n`;#
+            for (let linkId of outgoingLinks) {
+                // plan += `Link to ${portalData[linkId].name}\n`;#
+                plan.push({
+                    action: 'link',
+                    stepNo: ++stepNo,
+                    fromPortal: portalData[portalId],
+                    portal: portalData[linkId],
+                });
+                if (isNewField(allLinks, {
+                    fromPortal: portalData[portalId],
+                    toPortal: portalData[linkId],
+                    guid: linkId,
+                })) {
                     plan.push({
-                        action: 'link',
-                        stepNo: ++stepNo,
+                        action: 'field',
+                        stepNo: stepNo,
                         fromPortal: portalData[portalId],
                         portal: portalData[linkId],
                     });
-                    if (isNewField(allLinks, {
-                        fromPortal: portalData[portalId],
-                        toPortal: portalData[linkId],
-                        guid: linkId,
-                    })) {
-                        plan.push({
-                            action: 'field',
-                            stepNo: stepNo,
-                            fromPortal: portalData[portalId],
-                            portal: portalData[linkId],
-                        });
-                    };
-                }
+                };
             }
         }
 
@@ -791,7 +739,6 @@ function wrapper(plugin_info) {
             // return 'Something went wrong. Wait for all portals to load, and try again.';
             return null;
         }
-        // console.info('function generatePlan: returning a plan');
         return plan;
     };
 
@@ -873,8 +820,6 @@ function wrapper(plugin_info) {
             if (hcf === null) {
                 $("#hcf-plan-text").val("No HCF found. Try fewer layers, or different portals.");
             } else {
-                // self.addHCFToDrawTools(hcf);
-
                 // Generate portal data
                 let portalData = self.generatePortalData(hcf);
 
