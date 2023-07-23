@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: 57Cell's Field Planner
-// @version      2.0.0.20230723
+// @version      2.0.1.20230723
 // @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,6 +23,11 @@
 // ==/UserScript==
 
 /** Version History
+
+2.0.1.20230723
+NEW: Add field drawing layer (Heistergand)
+NEW: Created Control Fields are mentioned in the plan
+NEW: Add Statistics output
 
 2.0.0.20230723
 NEW: Add an option for general maximum fielding (57Cell)
@@ -87,7 +92,7 @@ function wrapper(plugin_info) {
 
     // layerGroup for the draws
     self.linksLayerGroup = null;
-    self.fieldLayerGroup = null;
+    self.fieldsLayerGroup = null;
 
     // TODO: make linkStyle editable in options dialog
     self.linkStyle = {
@@ -98,6 +103,16 @@ function wrapper(plugin_info) {
         interactive: false,
         smoothFactor: 10,
         dashArray: [12, 5, 4, 5, 6, 5, 8, 5, "100000" ],
+    };
+
+    // TODO: make fieldStyle editable in options dialog
+    self.fieldStyle = {
+        stroke: false,
+        fill: true,
+        fillColor: '#FF0000',
+        fillOpacity: 0.1,
+        clickable: false,
+        interactive: false,
     };
 
     // Add this after your global variables
@@ -131,9 +146,12 @@ function wrapper(plugin_info) {
         window.addHook('portalSelected', self.portalSelected);
 
         self.linksLayerGroup = new L.LayerGroup();
-        window.addLayerGroup('Fielding Plan', self.linksLayerGroup, false);
+        window.addLayerGroup('Fielding Plan (Links)', self.linksLayerGroup, false);
+
         // window.addLayerGroup('Homogeneous CF Links', self.linksLayerGroup, false);
-        // window.addLayerGroup('Homogeneous CF Fields', self.fieldLayerGroup, false);
+
+        self.fieldsLayerGroup = new L.LayerGroup();
+        window.addLayerGroup('Fielding Plan (Fields)', self.fieldsLayerGroup, false);
 
         window.map.on('overlayadd overlayremove', function() {
             setTimeout(function(){
@@ -266,7 +284,7 @@ function wrapper(plugin_info) {
         return list[0].GUID;
     };
 
-    
+
 
     /**
     * @function self.findHCF
@@ -528,8 +546,8 @@ function wrapper(plugin_info) {
             // (b) it doesn't need Matryoska links OR Matryoska links are allowed, 
             // (c) it doesn't exceed outgoing link limits, unless we haven't been able to meet those limits
             if (newLength < bestLength 
-                  && (!disallowMatryoska || !self.requiresMatryoskaLinks(portalData, newPath)) 
-                  && maxLinks <= Math.max(maxOutgoingLinksPermitted, leastMaxOutgoingLinks)) { 
+                && (!disallowMatryoska || !self.requiresMatryoskaLinks(portalData, newPath))
+                && maxLinks <= Math.max(maxOutgoingLinksPermitted, leastMaxOutgoingLinks)) {
                 bestPath = newPath;
                 bestLength = newLength;
             }
@@ -541,29 +559,59 @@ function wrapper(plugin_info) {
 
     self.planToText = function(plan) {
         let maxSBUL = plan.reduce((max, item) => Math.max(max, item.sbul || 0), 0);        
-        let planText = "";
+        let planText = "", sbulText = "";
         if (maxSBUL > 4) 
             return "Sadly, the best plan I found still needs "+maxSBUL+" softbanks on at least one portal. If you want me to try again, click 'Find Fielding Plan' again."
         if (maxSBUL > 2) 
             planText = "Warning: this plan can't be done solo. One of its portals needs "+maxSBUL+" softbanks.\n\n"        
+        let stepPos = 0;
+
         let keysText = "\nKeys needed:\n";
+        let keypos = 0;
+
+        let statsText = "\nStats:\n";
+        let portalCount = 0, linkCount = 0, fieldCount = 0;
+
         $.each(plan, function(index, item) {
-            let pos = `${index + 1}`;
+            // let pos = `${index + 1}`;
             if (item.action === 'capture') {
+                portalCount++;
                 sbulText = item.sbul === 0 ? "" : ` (${item.sbul} Softbank${(item.sbul == 1 ? "" : "s")})`;
-                planText += `${pos}. Capture ${item.portal.name}${sbulText}\n`;
+                planText += `${++stepPos}.`.padStart(4, '\xa0') + ` Capture ${item.portal.name}${sbulText}\n`;
             }
             else if (item.action === 'link') {
-                planText += `${pos}. Link to ${item.portal.name}\n`;
+                linkCount++;
+                planText += `${++stepPos}.`.padStart(4, '\xa0') + ` Link to ${item.portal.name}\n`;
+            }
+            else if (item.action === 'field') {
+                fieldCount++;
+                planText += '->'.padStart(7, '\xa0') + ` created a Control Field with ${item.c.name}\n`;
             }
             else if (item.action === 'farmkeys') {
-                keysText += `${item.portal.name}: ${item.keys}\n`;
+                keysText += `${++keypos})`.padStart(4, '\xa0') + ` ${item.portal.name}: ${item.keys}\n`;
             }
         });
-        planText += keysText;
+
+        let indentation = 8;
+        statsText +=
+            "Portals".padEnd(indentation, '\xa0') + `: ${portalCount}\n` +
+            "Links".padEnd(indentation, '\xa0') + `: ${linkCount}\n` +
+            "Fields".padEnd(indentation, '\xa0') + `: ${fieldCount}\n`;
+
+
+        planText += keysText + statsText;
         return planText;
     }
 
+    self.clearLayers = function() {
+        if (window.map.hasLayer(self.linksLayerGroup)) {
+            self.linksLayerGroup.clearLayers();
+        }
+        if (window.map.hasLayer(self.fieldsLayerGroup)) {
+            self.fieldsLayerGroup.clearLayers();
+        }
+
+    }
 
     // function to draw a link to the plugin layer
     self.drawLink = function (alatlng, blatlng, style) {
@@ -577,6 +625,18 @@ function wrapper(plugin_info) {
 
     }
 
+    // function to draw a field to the plugin layer
+    self.drawField = function (alatlng, blatlng, clatlng, style) {
+        //check if layer is active
+        if (!window.map.hasLayer(self.fieldsLayerGroup)) {
+            return;
+        }
+
+        var poly = L.polygon([alatlng, blatlng, clatlng], style);
+        poly.addTo(self.fieldsLayerGroup);
+
+    }
+
     self.exportDrawtoolsLink = function(p1, p2) {
         let alatlng = p1.latLng;
         let blatlng = p2.latLng;
@@ -586,25 +646,10 @@ function wrapper(plugin_info) {
 
     }
 
-
-    // TODO function to draw a field to the plugin layer
-    self.drawField = function (alatlng, blatlng, clatlng, style) {
-        //check if layer is active
-        if (!window.map.hasLayer(self.fieldLayerGroup)) {
-            return;
-        }
-
-        var poly = L.polygon([alatlng, blatlng, clatlng], style);
-        poly.addTo(self.fieldLayerGroup);
-
-    }
-
     // function to draw the plan to the plugin layer
     self.drawPlan = function(plan) {
         // initialize plugin layer
-        if (window.map.hasLayer(self.linksLayerGroup)) {
-            self.linksLayerGroup.clearLayers();
-        }
+        self.clearLayers();
 
         $.each(plan, function(index,planStep) {
             if (planStep.action === 'link') {
@@ -612,7 +657,11 @@ function wrapper(plugin_info) {
                 self.drawLink(ll_from, ll_to, self.linkStyle);
             }
             if (planStep.action === 'field') {
-                self.drawField(planStep.corners, self.fieldStyle);
+                self.drawField(
+                    planStep.a.latLng,
+                    planStep.b.latLng,
+                    planStep.c.latLng,
+                    self.fieldStyle);
             }
         });
     }
@@ -655,82 +704,94 @@ function wrapper(plugin_info) {
     // function to generate the final plan
     self.generatePlan = function(portalData, path, hcfLevel, fieldType) {
 
-        let allLinks = [];
-        const isNewField = function(knownLinks, newLink) {
+        /** @function getThirds
+          * Returns the list of portals, a new link a->b potentially(!) produces a field with.
+          * Note that this fuction totally ignores bearing and size and can easily return multiple
+          * fields on each side of the link.
+          *
+          * @param list {array} List of portal-tupels {a: {portal}, b: {portal}}
+          * @param a {point} Point for a portal
+          * @param b {point} Point for a portal
+          * @return {array} of portals
+          */
+        const getThirds = function(list, newLink) {
+            let a = newLink.fromPortal,
+                b = newLink.toPortal,
+                i, k,
+                linksOnA = [],
+                linksOnB = [],
+                result = [];
 
-            if (true) {
-                return false;
-            };
+            for (i in list) {
+                let ll_a = list[i].a.latLng;
+                let ll_b = list[i].b.latLng;
 
-            /**
-              * @param list {array} List of links
-              * @param a {point} Point for a portal
-              */
-            const getThirds = function(list, a, b) {
-                var i,k;
-                var linksOnA = [], linksOnB = [], result = [];
-                for (i in list) {
-                    let ll_a = list[i].a.latLng;
-                    let ll_b = list[i].b.latLng;
-
-                    if ((ll_a.equals(a.latLng) && ll_b.equals(b.latLng)) || (ll_a.equals(b.latLng) && ll_b.equals(a.latLng))) {
-                        // link in list equals tested link
-                        continue;
-                    }
-                    if (ll_a.equals(a.latLng) || ll_b.equals(a.latLng)) linksOnA.push(list[i]);
-                    if (ll_a.equals(b.latLng) || ll_b.equals(b.latLng)) linksOnB.push(list[i]);
+                if ((ll_a.equals(a.latLng) && ll_b.equals(b.latLng)) || (ll_a.equals(b.latLng) && ll_b.equals(a.latLng))) {
+                    // link in list equals tested link
+                    continue;
                 }
-                for (i in linksOnA) {
-                    for (k in linksOnB) {
-                        if (linksOnA[i].a.latLng.equals(linksOnB[k].a.latLng) || linksOnA[i].a.latLng.equals(linksOnB[k].b.latLng) )
-                            result.push(linksOnA[i].a);
-                        if (linksOnA[i].b.latLng.equals(linksOnB[k].a.latLng) || linksOnA[i].b.latLng.equals(linksOnB[k].b.latLng))
-                            result.push(linksOnA[i].b);
-                    }
+                if (ll_a.equals(a.latLng) || ll_b.equals(a.latLng)) linksOnA.push(list[i]);
+                if (ll_a.equals(b.latLng) || ll_b.equals(b.latLng)) linksOnB.push(list[i]);
+            }
+            for (i in linksOnA) {
+                for (k in linksOnB) {
+                    if (linksOnA[i].a.latLng.equals(linksOnB[k].a.latLng) || linksOnA[i].a.latLng.equals(linksOnB[k].b.latLng) )
+                        result.push(linksOnA[i].a);
+                    if (linksOnA[i].b.latLng.equals(linksOnB[k].a.latLng) || linksOnA[i].b.latLng.equals(linksOnB[k].b.latLng))
+                        result.push(linksOnA[i].b);
                 }
-                return result;
-            }; // end getThirds
+            }
 
-            return getThirds(knownLinks, newLink.fromPortal, newLink.toPortal);
-        }; // end isNewField
+            return result;
+        }; // end getThirds
 
-        let plan = [];
+        let plan = [],
+            allLinks = [],
+            stepNo = 0;
 
-        var stepNo = 0;
         // add the steps of the path
         for (let portalId of path) {
-            // plan += `Capture ${portalData[portalId].name}\n`;
-            let links = portalData[portalId].links;
-            links.sort((a, b) => portalData[a].depth - portalData[b].depth);
+            // plan += `Capture ${a.name}\n`;
+            let a = portalData[portalId];
+            let links = a.links;
+            links.sort((n, m) => portalData[n].depth - portalData[m].depth);
             // calculate outgoing links and count softbanks
-            outgoingLinks = links.filter(linkId => path.indexOf(linkId) < path.indexOf(portalId));
-            sbul = outgoingLinks.length <= 8 ? 0 : Math.floor((outgoingLinks.length-1)/8);
+            let outgoingLinks = links.filter(linkId => path.indexOf(linkId) < path.indexOf(portalId));
+            let sbul = outgoingLinks.length <= 8 ? 0 : Math.floor((outgoingLinks.length-1)/8);
+
+
 
             plan.push({
                 action: 'capture',
                 stepNo: ++stepNo,
-                portal: portalData[portalId],
+                portal: a,
                 sbul: sbul
             });
 
             for (let linkId of outgoingLinks) {
-                // plan += `Link to ${portalData[linkId].name}\n`;#
+                // keep track of all links we've already made
+                let b = portalData[linkId];
+                allLinks.push({a: a, b: b});
+
+                // plan += `Link to ${b.name}\n`;#
                 plan.push({
                     action: 'link',
                     stepNo: ++stepNo,
-                    fromPortal: portalData[portalId],
-                    portal: portalData[linkId],
+                    fromPortal: a,
+                    portal: b,
                 });
-                if (isNewField(allLinks, {
-                    fromPortal: portalData[portalId],
-                    toPortal: portalData[linkId],
+
+                for (let thirdPortal of getThirds(allLinks, {
+                    fromPortal: a,
+                    toPortal: b,
                     guid: linkId,
                 })) {
                     plan.push({
                         action: 'field',
                         stepNo: stepNo,
-                        fromPortal: portalData[portalId],
-                        portal: portalData[linkId],
+                        a: a,
+                        b: b,
+                        c: thirdPortal
                     });
                 };
             }
@@ -814,13 +875,13 @@ function wrapper(plugin_info) {
                 $("#layers-container").css("display", "none");
             }
         });
-        
+
         $("#field-type-hcf").change(function() {
             if ($(this).is(":checked")) {
                 $("#layers-container").css("display", "block");
             }
         });
-        
+
         $("#hcf-to-dt-btn").click(function() {
             self.exportToDrawtools(self.plan);
         });
@@ -860,6 +921,7 @@ function wrapper(plugin_info) {
             } else {
                 // Generate portal data
                 let portalData = self.generatePortalData(hcf);
+                // let fieldData = self.generateFieldData(hcf);
 
                 // Generate the initial path
                 let t = Math.random() * 2 * Math.PI; // random angle in radians
