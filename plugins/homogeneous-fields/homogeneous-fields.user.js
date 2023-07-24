@@ -558,13 +558,18 @@ function wrapper(plugin_info) {
 
 
     self.planToText = function(plan) {
-        let maxSBUL = plan.reduce((max, item) => Math.max(max, item.sbul || 0), 0);        
+        const nextChar = function(c) {
+            return c === 'z' ? 'A' : String.fromCharCode(c.charCodeAt(0) + 1);
+        }
+
+        let maxSBUL = plan.reduce((max, item) => Math.max(max, item.sbul || 0), 0);
         let planText = "", sbulText = "";
-        if (maxSBUL > 4) 
+        if (maxSBUL > 4)
             return "Sadly, the best plan I found still needs "+maxSBUL+" softbanks on at least one portal. If you want me to try again, click 'Find Fielding Plan' again."
-        if (maxSBUL > 2) 
-            planText = "Warning: this plan can't be done solo. One of its portals needs "+maxSBUL+" softbanks.\n\n"        
-        let stepPos = 0;
+        if (maxSBUL > 2)
+            planText = "Warning: this plan can't be done solo. One of its portals needs "+maxSBUL+" softbanks.\n\n"
+        let stepPos = 0,
+            linkPos = 'a';
 
         let keysText = "\nKeys needed:\n";
         let keypos = 0;
@@ -578,14 +583,17 @@ function wrapper(plugin_info) {
                 portalCount++;
                 sbulText = item.sbul === 0 ? "" : ` (${item.sbul} Softbank${(item.sbul == 1 ? "" : "s")})`;
                 planText += `${++stepPos}.`.padStart(4, '\xa0') + ` Capture ${item.portal.name}${sbulText}\n`;
+                linkPos = 'a';
             }
             else if (item.action === 'link') {
                 linkCount++;
-                planText += `${++stepPos}.`.padStart(4, '\xa0') + ` Link to ${item.portal.name}\n`;
+                // planText += `${stepPos}.${linkPos}:`.padStart(6, '\xa0') + ` Link to ${item.portal.name}\n`;
+                planText += `${linkPos})`.padStart(7, '\xa0') + ` Link to ${item.portal.name}\n`;
+                linkPos = nextChar(linkPos);
             }
             else if (item.action === 'field') {
                 fieldCount++;
-                planText += '->'.padStart(7, '\xa0') + ` created a Control Field with ${item.c.name}\n`;
+                planText += '→'.padStart(9, '\xa0') + ` Control Field with ${item.c.name}\n`;
             }
             else if (item.action === 'farmkeys') {
                 keysText += `${++keypos})`.padStart(4, '\xa0') + ` ${item.portal.name}: ${item.keys}\n`;
