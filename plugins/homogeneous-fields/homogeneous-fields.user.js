@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: 57Cell's Field Planner
-// @version      2.0.1.20230723
+// @version      2.1.0.20230726
 // @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,6 +23,9 @@
 // ==/UserScript==
 
 /** Version History
+
+2.1.0.20230726
+NEW: Option to generate Cobweb fielding plans (57Cell)
 
 2.0.1.20230723
 NEW: Add field drawing layer (Heistergand)
@@ -254,15 +257,7 @@ function wrapper(plugin_info) {
         return new self.HCF(level, corners, central, subHCFs);
     };
 
-    /** @function calculateCentroid
-     * get the portal GUID which is nearest
-     * to the centroid point of all given GUIDs.
-     * @param {array} GUIDs List of portal GUIDs
-     */
-    self.calculateCentroid = function (GUIDs) {
-
-        let sumLat = 0.0;
-        let sumLng = 0.0;
+    self.toLatLonObjects = function(GUIDs) {
         let list = [];
 
         for (let i = 0; i < GUIDs.length; i++) {
@@ -273,19 +268,49 @@ function wrapper(plugin_info) {
             });
         }
 
+        return list;
+    }
+
+    self.getClosestToTarget = function(list, target) {
+        list.sort((a, b) => target.distanceTo(a.ll) - target.distanceTo(b.ll));
+        return list[0].GUID;
+    }
+
+    /** @function calculateCentroid
+     * get the portal GUID which is nearest
+     * to the centroid point of all given GUIDs.
+     * @param {array} GUIDs List of portal GUIDs
+     */
+    self.calculateCentroid = function (GUIDs) {
+
+        let sumLat = 0.0;
+        let sumLng = 0.0;
+        let list = self.toLatLonObjects(GUIDs);
+
         for (let i = 0; i < list.length; i++) {
             sumLat += list[i].ll.lat; // adds the x-coordinate
             sumLng += list[i].ll.lng; // adds the y-coordinate
         }
 
         let centroid = new L.LatLng(sumLat / GUIDs.length, sumLng / GUIDs.length);
-        list.sort((a, b) => centroid.distanceTo(a.ll) - centroid.distanceTo(b.ll));
 
-        return list[0].GUID;
+        return self.getClosestToTarget(list, centroid);
     };
 
 
 
+        /** @function calculateCentroid
+     * get the portal GUID which is nearest
+     * to the centroid point of all given GUIDs.
+     * @param {array} GUIDs List of portal GUIDs
+     */
+    self.calculateNearestPortal = function (GUIDs, targetGUID) {
+        let list = self.toLatLonObjects(GUIDs);
+        let target = self.toLatLonObjects([targetGUID])[0].ll;
+        return self.getClosestToTarget(list, target);
+    };
+    
+    
     /**
     * @function self.findHCF
     * @param {int} Level
@@ -295,57 +320,66 @@ function wrapper(plugin_info) {
     self.findHCF = function(level, corners, portalsToConsider, mode, fieldType) {
         // console.info('function findHCF start')
         let portalsInTriangle = self.getPortalsInTriangle(corners, portalsToConsider);
-        if ((level === 1 && fieldType == 'hcf') || (fieldType == 'general' && portalsInTriangle.length == 0)) {
+        if ((level === 1 && fieldType == 'hcf') || (fieldType != 'hcf' && portalsInTriangle.length == 0)) {
             // Base case: return a level 1 HCF
             return self.constructHCF(level, corners, null, []);
         }
-        if (level > 1) {
-            let portalsNeeded = [-1,0,1,4,13,40,121];
-            if (fieldType == 'hcf' && portalsInTriangle.length < portalsNeeded[level]) // not enough portals, fail immediately
-                return null;
-            let candidates = Array.from(portalsInTriangle);  // create a copy of portalsInTriangle
-            let attempt = 0;
-            while (candidates.length > 0) {
-                let central = null;
+        
+        let portalsNeeded = [-1,0,1,4,13,40,121];
+        if (fieldType == 'hcf' && portalsInTriangle.length < portalsNeeded[level]) // not enough portals, fail immediately
+            return null;
+        let candidates = Array.from(portalsInTriangle);  // create a copy of portalsInTriangle
+        let attempt = 0;
+        while (candidates.length > 0) {
+            let central = null;
 
-                // Choose a central splitter
-
-                if (mode === 'perfect') {
-                    central = self.calculateCentroid(candidates);
-                } else {
-                    let centralIndex = Math.floor(Math.random() * candidates.length);
-                    central = candidates[centralIndex];
-                }
-
-                let subHCFs = [];
-                for (let i = 0; i < 3; i++) {
-                    let subCorners = [corners[(i + attempt)%3], corners[(i + 1 + attempt) % 3], central];
-                    let subTrianglePortals = self.getPortalsInTriangle(subCorners, portalsInTriangle);
-                    let insufficientPortals = subTrianglePortals.length < portalsNeeded[level-1];
-                    let subHCF = fieldType == 'hcf' && insufficientPortals ? null : self.findHCF(fieldType == 'hcf' ? level - 1 : level, subCorners, subTrianglePortals, mode, fieldType);
-                    if (fieldType == 'hcf' && subHCF === null) {
-                        // Failed to construct sub-HCF
-                        if (insufficientPortals) {
-                            // Remove all portals from the failed triangle and the central splitter from the candidates
-                            candidates = candidates.filter(portal => !subTrianglePortals.includes(portal) && portal !== central);
-                            attempt++;
-                        } else {
-                            // Remove just the failed central splitter (see Issue 11)
-                            candidates = candidates.filter(portal => portal !== central);
-                        }
-                        break;
-                    } 
-                    subHCFs.push(subHCF);
-                }
-
-                if (subHCFs.length === 3) {
-                    // Successfully constructed all sub-HCFs
-                    return self.constructHCF(level, corners, central, subHCFs);
-                }
+            // Choose a central splitter
+            if (fieldType === 'cobweb') {
+                attempt = 1; // ensure corner 0 gets replaced later when looking for deeper fields
+                central = self.calculateNearestPortal(candidates, corners[0]);
+            } else if (mode === 'perfect') {
+                central = self.calculateCentroid(candidates);
+            } else {
+                let centralIndex = Math.floor(Math.random() * candidates.length);
+                central = candidates[centralIndex];
             }
 
-            return null; // Failed to construct HCF after all candidates have been tried
+            let subHCFs = [];
+            for (let i = 0; i < 3; i++) {
+                let subCorners = [corners[(i + attempt)%3], corners[(i + 1 + attempt) % 3], central];
+                let subTrianglePortals = self.getPortalsInTriangle(subCorners, portalsInTriangle);
+                let insufficientPortals = subTrianglePortals.length < portalsNeeded[level-1];
+                let subHCF;
+                if (fieldType == 'hcf') {
+                    subHCF = insufficientPortals ? null : self.findHCF(level - 1, subCorners, subTrianglePortals, mode, fieldType);
+                } else if (fieldType == 'general') {
+                    subHCF = self.findHCF(level, subCorners, subTrianglePortals, mode, fieldType);
+                } else if (fieldType == 'cobweb') {
+                    subHCF = self.findHCF(level+1, subCorners, i == 0 ? subTrianglePortals : [], mode, fieldType);
+                }
+                if (fieldType == 'hcf' && subHCF === null) {
+                    // Failed to construct sub-HCF
+                    if (insufficientPortals) {
+                        // Remove all portals from the failed triangle and the central splitter from the candidates
+                        candidates = candidates.filter(portal => !subTrianglePortals.includes(portal) && portal !== central);
+                        attempt++;
+                    } else {
+                        // Remove just the failed central splitter (see Issue 11)
+                        candidates = candidates.filter(portal => portal !== central);
+                    }
+                    break;
+                } 
+                subHCFs.push(subHCF);
+            }
+
+            if (subHCFs.length === 3) {
+                // Successfully constructed all sub-HCFs
+                return self.constructHCF(level, corners, central, subHCFs);
+            }
         }
+
+        return null; // Failed to construct HCF after all candidates have been tried
+    
     };
 
     // helper function to recursively populate the portal data structure
@@ -847,12 +881,16 @@ function wrapper(plugin_info) {
             '  <label for="field-type-hcf" title="generate a homogeneous fielding plan">Homogeneous Fields</label>\n' +
             '  <input type="radio" id="field-type-general" name="field-type" value="general">\n' +
             '  <label for="field-type-general" title="generate a general maximum fielding plan">General Maximum Fielding</label>\n' +
+            '  <input type="radio" id="field-type-cobweb" name="field-type" value="cobweb">\n' +
+            '  <label for="field-type-cobweb" title="generate a cobweb fielding plan">Cobweb Plan</label>\n' +
             '<br>'+
+            '  <div id="mode-container">\n' +
             '  <label for="hcf-mode">Geometry: </label>\n' +
             '  <input type="radio" id="hcf-mode-random" name="hcf-mode" value="random" checked>\n' +
             '  <label for="hcf-mode-random" title="generate a geometrically randomised plan">Random</label>\n' +
             '  <input type="radio" id="hcf-mode-perfect" name="hcf-mode" value="perfect">\n' +
             '  <label for="hcf-mode-perfect" title="generate a geometrically perfectly balanced plan">Perfect</label>\n' +
+            '  </div>\n' +
             '<br>'+
             '  <div id="layers-container">\n' +
             '    <label for="layers">Layers: </label>\n' +
@@ -881,12 +919,21 @@ function wrapper(plugin_info) {
         $("#field-type-general").change(function() {
             if ($(this).is(":checked")) {
                 $("#layers-container").css("display", "none");
+                $("#mode-container").css("display", "block");
+            }
+        });
+        
+        $("#field-type-cobweb").change(function() {
+            if ($(this).is(":checked")) {
+                $("#layers-container").css("display", "none");
+                $("#mode-container").css("display", "none");
             }
         });
 
         $("#field-type-hcf").change(function() {
             if ($(this).is(":checked")) {
                 $("#layers-container").css("display", "block");
+                $("#mode-container").css("display", "block");
             }
         });
 
@@ -1026,18 +1073,6 @@ function wrapper(plugin_info) {
 
 } // wrapper end
 
-/*
-// Setup wrapper, if not already done
-if (window.plugin.homogeneousFields === undefined) {
-  wrapper();
-}
-
-if (window.iitcLoaded) {
-  window.plugin.homogeneousFields.setup();
-} else {
-  window.addHook('iitcLoaded', window.plugin.homogeneousFields.setup);
-}
- */
 // Create a script element to hold our content script
 var script = document.createElement('script');
 var info = {};
