@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: 57Cell's Field Planner
-// @version      2.1.1.20230727
+// @version      2.1.2.20230728
 // @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,6 +23,8 @@
 // ==/UserScript==
 
 /** Version History
+2.1.2.20230728
+NEW: Portal Selector now shows portal images.
 
 2.1.1.20230727
 FIX: Dialog UI improvements (Heistergand)
@@ -863,6 +865,7 @@ function wrapper(plugin_info) {
         return plan;
     };
 
+    // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
     self.dialog_html = '<div id="hcf-plan-container" style="height: inherit; display: flex; flex-direction: column; align-items: stretch;">\n' +
         '    <div id="hcf-portal-details">Choose three portals</div>\n' +
         '    <fieldset style="margin: 2px;">\n'+
@@ -892,6 +895,7 @@ function wrapper(plugin_info) {
         '      <button id="find-hcf-plan" style="margin: 2px;">Find Fielding Plan</button>'+
         '      <button id="hcf-to-dt-btn" hidden>Export to DrawTools</button>'+
         '      <button id="hcf-to-arc-btn" hidden>Export to Arc</button>'+
+        '      <button id="hcf-simulator-btn" hidden>Simulate</button>'+
         '    </div>\n' +
         '    <br>\n' +
         '    <textarea readonly id="hcf-plan-text" style="height:inherit;width: auto;margin:2px;resize:none"></textarea>\n'+
@@ -904,13 +908,18 @@ function wrapper(plugin_info) {
             id: 'dialog-hcf-plan-view',
             html: self.dialog_html,
             width: '40%',
-            minHeight: 350,
+            minHeight: 450,
         });
         self.attachEventHandler();
+        self.updateDialog();
         $('#dialog-dialog-hcf-plan-view').css("height", "300px");
     };
 
     self.attachEventHandler = function() {
+        $("#hcf-simulator-btn").click(function() {
+            self.simulator(self.plan);
+        });
+
         $("#hcf-to-arc-btn").click(function() {
             self.drawArcPlan(self.plan);
             window.plugin.arcs.list();
@@ -948,70 +957,72 @@ function wrapper(plugin_info) {
         });
 
         $("#find-hcf-plan").click(function() {
-
-            // Get selected portals and desired level
-            let corners = self.selectedPortals;
-
-            // If not enough portals have been selected, show an error and return
-            if (corners.length < 3) {
-                $("#hcf-plan-text").val("Please select at least three portals.");
-                return;
-            }
-            let level = parseInt($("#layers").val());
-            let mode = $( "input[type=radio][name=hcf-mode]:checked" ).val();
-            let fieldType = $( "input[type=radio][name=field-type]:checked" ).val();
-
-            let hcf = null;
-            // Try to construct HCF
-            $("#hcf-plan-text").val(`Calculating ${level} layers...`);
-            try {
-                hcf = self.findHCF(level, corners, null, mode, fieldType);
-            }
-            finally {
-                $("#hcf-plan-text").val("");
-            }
-
-            if (hcf === null) {
-                $("#hcf-plan-text").val("No HCF found. Try fewer layers, or different portals.");
-            } else {
-                // Generate portal data
-                let portalData = self.generatePortalData(hcf);
-                // let fieldData = self.generateFieldData(hcf);
-
-                // Generate the initial path
-                let t = Math.random() * 2 * Math.PI; // random angle in radians
-                let initialPath = Object.keys(portalData).sort((a, b) => {
-                    let aValue = portalData[a].latLng.lat * Math.cos(t) + portalData[a].latLng.lng * Math.sin(t);
-                    let bValue = portalData[b].latLng.lat * Math.cos(t) + portalData[b].latLng.lng * Math.sin(t);
-                    return aValue - bValue;
-                }); // the "sweep" method: see https://youtu.be/iH0JMfR7BTI
-
-                // Find a shorter path
-                let shortestPath = self.findShortestPath(portalData, initialPath, fieldType);
-
-                // Generate the plan
-                self.plan = null;
-                self.plan = self.generatePlan(portalData, shortestPath, level, fieldType);
-
-                if (!self.plan) {
-                    $("#hcf-plan-text").val('Something went wrong. Wait for all portals to load, and try again.');
-                } else {
-                    $("#hcf-plan-text").val(self.planToText(self.plan));
-                    self.drawPlan(self.plan);
-
-                    if(typeof window.plugin.drawTools !== 'undefined') {
-                        $("#hcf-to-dt-btn").show();
-                    };
-
-                    // don't tell anyone:
-                    if(typeof window.plugin.arcs !== 'undefined' && false ) {
-                        $("#hcf-to-arc-btn").show();
-                    };
-                }
-            }
+            self.find_hcf_plan();
         });
     }
 
+    self.find_hcf_plan = function() {
+        // Get selected portals and desired level
+        let corners = self.selectedPortals;
+
+        // If not enough portals have been selected, show an error and return
+        if (corners.length < 3) {
+            $("#hcf-plan-text").val("Please select at least three portals.");
+            return;
+        }
+        let level = parseInt($("#layers").val());
+        let mode = $( "input[type=radio][name=hcf-mode]:checked" ).val();
+        let fieldType = $( "input[type=radio][name=field-type]:checked" ).val();
+
+        let hcf = null;
+        // Try to construct HCF
+        $("#hcf-plan-text").val(`Calculating ${level} layers...`);
+        try {
+            hcf = self.findHCF(level, corners, null, mode, fieldType);
+        }
+        finally {
+            $("#hcf-plan-text").val("");
+        }
+
+        if (hcf === null) {
+            $("#hcf-plan-text").val("No HCF found. Try fewer layers, or different portals.");
+        } else {
+            // Generate portal data
+            let portalData = self.generatePortalData(hcf);
+            // let fieldData = self.generateFieldData(hcf);
+
+            // Generate the initial path
+            let t = Math.random() * 2 * Math.PI; // random angle in radians
+            let initialPath = Object.keys(portalData).sort((a, b) => {
+                let aValue = portalData[a].latLng.lat * Math.cos(t) + portalData[a].latLng.lng * Math.sin(t);
+                let bValue = portalData[b].latLng.lat * Math.cos(t) + portalData[b].latLng.lng * Math.sin(t);
+                return aValue - bValue;
+            }); // the "sweep" method: see https://youtu.be/iH0JMfR7BTI
+
+            // Find a shorter path
+            let shortestPath = self.findShortestPath(portalData, initialPath, fieldType);
+
+            // Generate the plan
+            self.plan = null;
+            self.plan = self.generatePlan(portalData, shortestPath, level, fieldType);
+
+            if (!self.plan) {
+                $("#hcf-plan-text").val('Something went wrong. Wait for all portals to load, and try again.');
+            } else {
+                $("#hcf-plan-text").val(self.planToText(self.plan));
+                self.drawPlan(self.plan);
+
+                if(typeof window.plugin.drawTools !== 'undefined') {
+                    $("#hcf-to-dt-btn").show();
+                };
+
+                // don't tell anyone:
+                if(typeof window.plugin.arcs !== 'undefined') {
+                    $("#hcf-to-arc-btn").show();
+                };
+            }
+        }
+    };
 
     self.portalSelected = function(data) {
         // Ignore if already selected
@@ -1035,15 +1046,32 @@ function wrapper(plugin_info) {
     self.updateDialog = function() {
         // Update portal details in dialog
         let portalDetailsDiv = $('#hcf-portal-details');
+
+        let portalDetailsHTML = '';
+
         portalDetailsDiv.empty();
-        portalDetailsDiv.append("<p>I'll generate a fielding plan with corners:<ul>\n");
+        // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
+        portalDetailsHTML += '<p>I\'ll generate a fielding plan with corners:</p><div id="hcf-portal-images" style="display: flex; justify-content: space-evenly;">\n';
+        debugger;
+
         for (let portalDetails of self.selectedPortalDetails) {
-            portalDetailsDiv.append('<li>' + portalDetails.title + '</li>\n');
+            // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
+            portalDetailsHTML += '<fieldset title="'+portalDetails.title+'" style="'+
+                'height: 140px; ' +
+                'width: -webkit-fill-available;'+
+                'cursor: help;' +
+                'background: no-repeat center center;' +
+                'background-size: cover; ' +
+                'background-image: url(\'' + portalDetails.image +
+                '\')">' +
+                '<legend class="ui-dialog-titlebar">'+portalDetails.title +'</legend></fieldset>\n';
         }
         if (self.selectedPortalDetails.length < 3) {
-            portalDetailsDiv.append('<li>Please select ' + (3-self.selectedPortalDetails.length) + ' more</li>\n');
+            portalDetailsHTML += '<div>Please select ' + (3-self.selectedPortalDetails.length) + ' more</div>\n';
         }
-        portalDetailsDiv.append('</ul>');
+        portalDetailsHTML += '</div>';
+        portalDetailsDiv.append(portalDetailsHTML);
+
         $('#hcf-plan-text').val(portalDetailsDiv.text());
 
         // Enable "Find HCF Plan" button if three portals have been selected
