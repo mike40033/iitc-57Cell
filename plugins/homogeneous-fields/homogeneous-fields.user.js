@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: 57Cell's Field Planner
-// @version      2.1.2.20230728
+// @version      2.1.2.20230731
 // @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,8 +23,9 @@
 // ==/UserScript==
 
 /** Version History
-2.1.2.20230728
-NEW: Portal Selector now shows portal images.
+2.1.2.20230731
+NEW: Portal selector now shows portal images.
+NEW: Selected portals get animated when hovering the images.
 
 2.1.1.20230727
 FIX: Dialog UI improvements (Heistergand)
@@ -73,6 +74,8 @@ function wrapper(plugin_info) {
     if (typeof window.plugin !== 'function') window.plugin = function() {};
 
     // PLUGIN START
+    console.log('loading hcf plugin')
+
     let self = window.plugin.homogeneousFields = function() {};
 
     // helper function to convert portal ID to portal object
@@ -96,11 +99,11 @@ function wrapper(plugin_info) {
 
     // Global variables for selected portals
     self.selectedPortals = [];
-    self.selectedPortalDetails = [];
 
     // layerGroup for the draws
     self.linksLayerGroup = null;
     self.fieldsLayerGroup = null;
+    self.highlightLayergroup = null;
 
     // TODO: make linkStyle editable in options dialog
     self.linkStyle = {
@@ -154,6 +157,9 @@ function wrapper(plugin_info) {
 
         self.fieldsLayerGroup = new L.LayerGroup();
         window.addLayerGroup('Fielding Plan (Fields)', self.fieldsLayerGroup, false);
+        // debugger;
+        self.highlightLayergroup = new L.LayerGroup();
+        window.addLayerGroup('Fielding Plan (Highlights)', self.highlightLayergroup, true);
 
         window.map.on('overlayadd overlayremove', function() {
             setTimeout(function(){
@@ -652,6 +658,9 @@ function wrapper(plugin_info) {
             self.fieldsLayerGroup.clearLayers();
         }
 
+        if (window.map.hasLayer(self.highlightLayergroup)) {
+            self.highlightLayergroup.clearLayers();
+        }
     }
 
     // function to draw a link to the plugin layer
@@ -864,10 +873,28 @@ function wrapper(plugin_info) {
         }
         return plan;
     };
+    self.cornerPreviewPlaceholderHTML = '<fieldset ' +
+        'title="<empty>" ' +
+        'style="' +
+        'height: 140px; ' +
+        'width: -webkit-fill-available;'+
+        'cursor: help;' +
+        'background: no-repeat center center;' +
+        'background-size: cover; ' +
+        // 'background-image: url(\'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==\')' +
+        'background-image: url(\'//commondatastorage.googleapis.com/ingress.com/img/default-portal-image.png\')' +
+        '"' + // end of style
+        '>' +
+        '<legend class="ui-dialog-titlebar">&lt;empty&gt;</legend>select a portal</fieldset>\n';
+
 
     // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
     self.dialog_html = '<div id="hcf-plan-container" style="height: inherit; display: flex; flex-direction: column; align-items: stretch;">\n' +
-        '    <div id="hcf-portal-details">Choose three portals</div>\n' +
+        '    <div id="hcf-portal-details">' +
+        self.cornerPreviewPlaceholderHTML +
+        self.cornerPreviewPlaceholderHTML +
+        self.cornerPreviewPlaceholderHTML +
+        '</div>\n' +
         '    <fieldset style="margin: 2px;">\n'+
         '      <legend>Options</legend>\n'+
         '      <label for="field-type">Field type: </label>\n' +
@@ -903,17 +930,242 @@ function wrapper(plugin_info) {
 
     // Attach click event to find-hcf-plan-button after the dialog is created
     self.openDialog = function() {
-        dialog({
-            title: 'Fielding Plan View',
-            id: 'dialog-hcf-plan-view',
-            html: self.dialog_html,
-            width: '40%',
-            minHeight: 450,
-        });
-        self.attachEventHandler();
-        self.updateDialog();
-        $('#dialog-dialog-hcf-plan-view').css("height", "300px");
+        if (!self.dialogIsOpen()) {
+            dialog({
+                title: 'Fielding Plan View',
+                id: 'hcf-plan-view',
+                html: self.dialog_html,
+                width: '40%',
+                minHeight: 450,
+            });
+            self.attachEventHandler();
+            self.updateDialog();
+            $('#dialog-hcf-plan-view').css("height", "300px");
+        }
     };
+
+    // Store the animation circle layers in an array to manipulate them later
+    self.circleAnimationLayers = {};
+    // Store the animation request IDs in an object to handle multiple animations
+    self.animationRequestIds = {};
+
+    /**
+     * @summary Animates a circle line expanding from a given portal location.
+     * @description This function animates a circle line that expands from a portal location with a pulsating effect.
+     * @author AI Assistant: ChatGPT v3.5
+     * @author Heistergand
+     *
+     * @param {string} portalGuid - The GUID of the portal.
+     */
+    function animateCircle(guid) {
+        if (self.animationStartTime === null) {
+            // Set the timestamp when the animation starts, but only if it's null
+            self.animationStartTime = performance.now();
+        }
+
+        /**
+           * The options for the circle line.
+           *
+           * @typedef {Object} CircleOptions
+           * @property {string} color - The color of the circle line.
+           * @property {number} weight - The line weight (thickness) of the circle line.
+           * @property {number} opacity - The opacity of the circle line.
+           * @property {number} fillOpacity - The opacity of the circle's fill.
+           */
+
+        const circleOptions = {
+            // todo color
+            color: 'red',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0,
+        };
+
+        const minRadius = 20;  // Set the minimum radius to 20
+        const maxRadius = 120; // Set the maximum radius to 120
+        const animationDuration = 1000; // Adjust the animation speed as needed
+
+        /**
+         * Updates the circle's radius for the animation.
+         *
+         * @param {DOMHighResTimeStamp} timestamp - The current timestamp.
+         */
+        function updateRadius(timestamp) {
+            const progress = timestamp - self.animationStartTime;
+            const circleRadius = (progress / animationDuration) * maxRadius;
+
+            circle.setRadius(circleRadius);
+
+            if (circleRadius < maxRadius) {
+                // Continue the animation
+                self.animationRequestIds[guid] = requestAnimationFrame(updateRadius);
+            } else {
+                // Reset the circle layer to its initial state
+                circle.setRadius(minRadius);
+                // Reset the self.animationStartTime so it can start fresh on the next hover
+                self.animationStartTime = performance.now();
+                // repeat
+                self.animationRequestIds[guid] = requestAnimationFrame(updateRadius);
+            }
+        }
+
+        const ll = portals[guid].getLatLng();
+        var circle = L.circle(ll, {
+            ...circleOptions,
+            radius: minRadius, // Start with the minimum radius
+        });
+        circle.addTo(self.highlightLayergroup);
+        self.circleAnimationLayers[guid] = circle;
+
+
+        // const startTime = performance.now();
+        self.animationRequestId = requestAnimationFrame(updateRadius);
+    }; // enod of animateCircle
+
+
+
+
+    //     /**
+    //  * @summary Animates a triangle expanding and shrinking from a given portal location (New animation).
+    //  * @description This function animates a triangle that expands and then shrinks back from a portal location.
+    //  *
+    //  * @param {string} guid - The GUID of the portal.
+    //  */
+    //     function animateTriangle(guid) {
+    //         if (self.animationStartTime === null) {
+    //             // Set the timestamp when the animation starts, but only if it's null
+    //             self.animationStartTime = performance.now();
+    //         }
+
+    //         const minDistance = 30; // Set the minimum distance to 30
+    //         const maxDistance = 100; // Set the maximum distance to 100
+    //         const animationDuration = 1000; // Adjust the animation speed as needed
+
+    //         const portalLatLng = portals[guid].getLatLng();
+    //         const triangleOptions = {
+    //             color: 'blue',
+    //             weight: 4,
+    //             fillOpacity: 0, // Make the triangle transparent
+    //             dashArray: calculateTriangleDashArray(minDistance), // Initial dashArray for minimum distance
+    //         };
+
+    //         const triangle = L.polygon([], triangleOptions);
+    //         triangle.addTo(self.highlightLayergroup);
+    //         self.circleAnimationLayers[guid] = triangle;
+
+    //         /**
+    //    * Updates the triangle's size for the animation.
+    //    *
+    //    * @param {DOMHighResTimeStamp} timestamp - The current timestamp.
+    //    */
+    //         function updateTriangleSize(timestamp) {
+    //             const progress = timestamp - self.animationStartTime;
+    //             let distance = (progress / animationDuration) * (maxDistance - minDistance);
+
+    //             if (distance < maxDistance) {
+    //                 // For expanding
+    //                 updateTriangleVertices(calculateTriangleLatLngs(portalLatLng, distance));
+    //                 triangle.setStyle({ dashArray: calculateTriangleDashArray(distance) });
+    //             } else {
+    //                 // For shrinking
+    //                 updateTriangleVertices(calculateTriangleLatLngs(portalLatLng, maxDistance - (distance - maxDistance)));
+    //                 triangle.setStyle({ dashArray: calculateTriangleDashArray(maxDistance - (distance - maxDistance)) });
+    //             }
+
+    //             // Request the next animation frame until the animation duration is reached
+    //             if (progress < animationDuration) {
+    //                 self.animationRequestIds[guid] = requestAnimationFrame(updateTriangleSize);
+    //             } else {
+    //                 // Reset the animation start time for the next animation cycle
+    //                 self.animationStartTime = performance.now();
+    //                 // Request the next animation frame for the next cycle
+    //                 self.animationRequestIds[guid] = requestAnimationFrame(updateTriangleSize);
+    //             }
+    //         }
+
+    //         // Remove the previous animation layer if it exists
+    //         const previousAnimationLayer = self.circleAnimationLayers[guid];
+    //         if (previousAnimationLayer) {
+    //             previousAnimationLayer.remove();
+    //         }
+
+    //         // Create the initial triangle at the portal location with minimum distance
+    //         updateTriangleVertices(calculateTriangleLatLngs(portalLatLng, minDistance));
+
+    //         // Start the animation
+    //         self.animationRequestIds[guid] = requestAnimationFrame(updateTriangleSize);
+    //     }
+
+    //     /**
+    //  * Updates the triangle's vertices.
+    //  *
+    //  * @param {Array} vertices - An array of coordinates representing the triangle's vertices.
+    //  */
+    //     function updateTriangleVertices(vertices) {
+    //         const triangle = self.circleAnimationLayers[guid];
+    //         if (triangle) {
+    //             triangle.setLatLngs(vertices);
+    //         }
+    //     }
+
+    //     /**
+    //  /**
+    //  * Calculates the coordinates of the triangle's vertices based on the centroid and the distance to a vertex.
+    //  *
+    //  * @param {L.LatLng} centroid - The centroid of the triangle.
+    //  * @param {number} distance - The distance between the centroid and a vertex.
+    //  * @returns {Array} An array of coordinates representing the triangle's vertices.
+    //  */
+    //     function calculateTriangleLatLngs(centroid, distance) {
+    //         const angle = (2 * Math.PI) / 3; // 120 degrees in radians
+    //         const x0 = centroid.lng;
+    //         const y0 = centroid.lat;
+    //         const x1 = x0 + distance * Math.cos(angle);
+    //         const y1 = y0 + distance * Math.sin(angle);
+    //         const x2 = x0 + distance * Math.cos(angle * 2);
+    //         const y2 = y0 + distance * Math.sin(angle * 2);
+    //         return [
+    //             [y0, x0], // Starting vertex (centroid)
+    //             [y1, x1], // Vertex at 120 degrees
+    //             [y2, x2], // Vertex at 240 degrees
+    //             [y0, x0], // Closing the shape by connecting back to Vertex 1 (centroid)
+    //         ];
+    //     }
+
+    //     /**
+    //  * Calculates the dashArray for the equilateral triangle to show only the middle third of each side.
+    //  *
+    //  * @param {number} distance - The distance between the centroid and a vertex of the equilateral triangle.
+    //  * @returns {string} The dashArray for the triangle's `L.polygon`.
+    //  */
+    //     function calculateTriangleDashArray(distance) {
+    //         const perimeter = distance * 3; // Perimeter of the equilateral triangle
+    //         const sectorLength = perimeter / 9; // Length of each sector (dash + gap)
+
+    //         const dashArray = [
+    //             `${(sectorLength / 9).toFixed(2)}px`, // 1/9 of a sector (blank)
+    //             `${(sectorLength / 9).toFixed(2)}px`, // 1/9 of a sector (line)
+    //             `${(2 * (sectorLength / 9)).toFixed(2)}px`, // 2/9 of a sector (blank)
+    //             `${(sectorLength / 9).toFixed(2)}px`, // 1/9 of a sector (line)
+    //             `${(2 * (sectorLength / 9)).toFixed(2)}px`, // 2/9 of a sector (blank)
+    //             `${(sectorLength / 9).toFixed(2)}px`, // 1/9 of a sector (line)
+    //             `${(sectorLength / 9).toFixed(2)}px`, // 1/9 of a sector (line) to close the triangle
+    //         ];
+
+    //         return dashArray.join(', ');
+    //     }
+
+    // Constants for animation styles
+    const ANIMATION_STYLE_DEFAULT = 'default';
+    const ANIMATION_STYLE_TRIANGLE = 'triangle';
+
+    // self.animationRequestId = null; // Global variable to keep track of the animation loop
+    self.animationStartTime = null; // Timestamp when the animation starts
+
+    // Set the default animation style
+    let currentAnimationStyle = ANIMATION_STYLE_DEFAULT;
+
+
 
     self.attachEventHandler = function() {
         $("#hcf-simulator-btn").click(function() {
@@ -959,11 +1211,43 @@ function wrapper(plugin_info) {
         $("#find-hcf-plan").click(function() {
             self.find_hcf_plan();
         });
+
+        $("#hcf-portal-details").mouseover(function() {
+            if (window.map.hasLayer(self.highlightLayergroup)) {
+                self.highlightLayergroup.clearLayers();
+            }
+            self.selectedPortals.forEach(({guid, details}) => {
+                if (currentAnimationStyle === ANIMATION_STYLE_DEFAULT) {
+                    animateCircle(guid);
+                } else if (currentAnimationStyle === ANIMATION_STYLE_TRIANGLE) {
+                    animateTriangle(guid);
+                }
+            });
+
+        });
+
+        $("#hcf-portal-details").mouseout(function() {
+            for (const guid in self.animationRequestIds) {
+                const requestId = self.animationRequestIds[guid];
+                cancelAnimationFrame(requestId);
+                const circle = self.circleAnimationLayers[guid];
+                if (circle) {
+                    circle.remove();
+                }
+            }
+            self.animationStartTime = null;
+            // Clear the animationRequestIds object after canceling the animations
+            self.animationRequestIds = {};
+            if (window.map.hasLayer(self.highlightLayergroup)) {
+                self.highlightLayergroup.clearLayers();
+            }
+        });
     }
 
     self.find_hcf_plan = function() {
         // Get selected portals and desired level
-        let corners = self.selectedPortals;
+        // let corners = self.selectedPortals;
+        let corners = self.selectedPortals.map(portal => portal.guid);
 
         // If not enough portals have been selected, show an error and return
         if (corners.length < 3) {
@@ -1025,22 +1309,29 @@ function wrapper(plugin_info) {
     };
 
     self.portalSelected = function(data) {
+        // ignore if dialog closed
+        if (!self.dialogIsOpen()) {
+            return;
+        };
+
+
         // Ignore if already selected
         let portalDetails = window.portalDetail.get(data.selectedPortalGuid);
         if (portalDetails === undefined) return;
-        if (self.selectedPortals.includes(data.selectedPortalGuid)) return;
+        if (self.selectedPortals.some(({guid}) => guid === data.selectedPortalGuid)) return;
 
         // Add selected portal to list
-        self.selectedPortals.push(data.selectedPortalGuid);
+        // debugger;
+        self.selectedPortals.push({guid: data.selectedPortalGuid, details: portalDetails});
         while (self.selectedPortals.length > 3) {
             self.selectedPortals.shift(); // remove the first item
         }
-        // Retrieve portal details
-        self.selectedPortalDetails.push(portalDetails);
-        while (self.selectedPortalDetails.length > 3) {
-            self.selectedPortalDetails.shift(); // remove the first item
-        }
+
         self.updateDialog();
+    };
+
+    self.dialogIsOpen = function() {
+        return ($("#dialog-hcf-plan-view").hasClass("ui-dialog-content") && $("#dialog-hcf-plan-view").dialog('isOpen'));
     };
 
     self.updateDialog = function() {
@@ -1049,25 +1340,35 @@ function wrapper(plugin_info) {
 
         let portalDetailsHTML = '';
 
+        // wipe placeholders and previous images
         portalDetailsDiv.empty();
+
         // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
         portalDetailsHTML += '<p>I\'ll generate a fielding plan with corners:</p><div id="hcf-portal-images" style="display: flex; justify-content: space-evenly;">\n';
-        debugger;
+        // debugger;
 
-        for (let portalDetails of self.selectedPortalDetails) {
+        self.selectedPortals.forEach(({guid, details}) => {
             // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
-            portalDetailsHTML += '<fieldset title="'+portalDetails.title+'" style="'+
+            portalDetailsHTML += '<fieldset ' +
+                'title="' + details.title + '" ' +
+                'style="' +
                 'height: 140px; ' +
                 'width: -webkit-fill-available;'+
                 'cursor: help;' +
                 'background: no-repeat center center;' +
                 'background-size: cover; ' +
-                'background-image: url(\'' + portalDetails.image +
-                '\')">' +
-                '<legend class="ui-dialog-titlebar">'+portalDetails.title +'</legend></fieldset>\n';
-        }
-        if (self.selectedPortalDetails.length < 3) {
-            portalDetailsHTML += '<div>Please select ' + (3-self.selectedPortalDetails.length) + ' more</div>\n';
+                'background-image: url(\'' + details.image + '\')' +
+                '"' + // end of style
+                'id="hcf-corner-preview-' + guid + '"' +
+                '>' +
+                '<legend class="ui-dialog-titlebar">'+details.title +'</legend></fieldset>\n';
+        });
+
+        // self.selectedPortalDetails
+
+        for (let i=0; i < (3 - self.selectedPortals.length); i++) {
+            // portalDetailsHTML += '<div>Please select ' + (3-self.selectedPortals.length) + ' more</div>\n';
+            portalDetailsHTML += self.cornerPreviewPlaceholderHTML;
         }
         portalDetailsHTML += '</div>';
         portalDetailsDiv.append(portalDetailsHTML);
@@ -1086,7 +1387,8 @@ function wrapper(plugin_info) {
     };
 
     // PLUGIN END
-
+    self.pluginLoadedTimeStamp = performance.now();
+    console.log('hcf plugin is ready')
 
 
     // Add an info property for IITC's plugin system
