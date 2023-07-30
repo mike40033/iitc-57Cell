@@ -24,8 +24,9 @@
 
 /** Version History
 2.1.2.20230731
-NEW: Portal selector now shows portal images.
-NEW: Selected portals get animated when hovering the images.
+NEW: Portal selector now shows portal images. (Heistergand)
+NEW: Selected portals get animated when hovering the images. (Heistergand)
+FIX: Portal selection does not affect plugin while dialog is not open. (Heistergand)
 
 2.1.1.20230727
 FIX: Dialog UI improvements (Heistergand)
