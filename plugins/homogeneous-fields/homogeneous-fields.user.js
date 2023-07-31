@@ -24,8 +24,9 @@
 
 /** Version History
 2.1.2.20230731
-NEW: Portal selector now shows portal images. (Heistergand)
-NEW: Selected portals get animated when hovering the images. (Heistergand)
+NEW: Add selected portals images in the dialog. (Heistergand)
+NEW: Add animated corners: Selected portals get animated circles when hovering the preview images. (Heistergand)
+NEW: Add clear button (Heistergand)
 FIX: Portal selection does not affect plugin while dialog is not open. (Heistergand)
 
 2.1.1.20230727
@@ -920,10 +921,11 @@ function wrapper(plugin_info) {
         '      </div>\n' +
         '    </fieldset>\n' +
         '    <div id="hcf-buttons-container">\n' +
-        '      <button id="find-hcf-plan" style="margin: 2px;">Find Fielding Plan</button>'+
-        '      <button id="hcf-to-dt-btn" hidden>Export to DrawTools</button>'+
-        '      <button id="hcf-to-arc-btn" hidden>Export to Arc</button>'+
-        '      <button id="hcf-simulator-btn" hidden>Simulate</button>'+
+        '      <button id="find-hcf-plan" style="cursor: pointer" style="margin: 2px;">Find Fielding Plan</button>'+
+        '      <button id="hcf-to-dt-btn" style="cursor: pointer" hidden>Export to DrawTools</button>'+
+        '      <button id="hcf-to-arc-btn" style="cursor: pointer" hidden>Export to Arc</button>'+
+        '      <button id="hcf-simulator-btn" style="cursor: pointer" hidden>Simulate</button>'+
+        '      <button id="hcf-clear-btn" style="cursor: pointer">Clear</button>'+
         '    </div>\n' +
         '    <br>\n' +
         '    <textarea readonly id="hcf-plan-text" style="height:inherit;width: auto;margin:2px;resize:none"></textarea>\n'+
@@ -1203,6 +1205,16 @@ function wrapper(plugin_info) {
             self.exportToDrawtools(self.plan);
         });
 
+        $("#hcf-clear-btn").click(function() {
+            self.clearLayers();
+            self.selectedPortals = [];
+            self.plan = null;
+            $("#hcf-to-dt-btn").hide();
+            $("#hcf-to-arc-btn").hide();
+            self.updateDialog();
+
+        });
+
         $("#find-hcf-plan").mousedown(function() {
             // Clear text field
             // setTimeout($("#hcf-plan-text").val("Please wait..."), 1);
@@ -1212,6 +1224,7 @@ function wrapper(plugin_info) {
         $("#find-hcf-plan").click(function() {
             self.find_hcf_plan();
         });
+
 
         $("#hcf-portal-details").mouseover(function() {
             if (window.map.hasLayer(self.highlightLayergroup)) {
@@ -1293,6 +1306,8 @@ function wrapper(plugin_info) {
 
             if (!self.plan) {
                 $("#hcf-plan-text").val('Something went wrong. Wait for all portals to load, and try again.');
+                $("#hcf-to-dt-btn").hide();
+                $("#hcf-to-arc-btn").hide();
             } else {
                 $("#hcf-plan-text").val(self.planToText(self.plan));
                 self.drawPlan(self.plan);
@@ -1379,7 +1394,13 @@ function wrapper(plugin_info) {
         // Enable "Find HCF Plan" button if three portals have been selected
         if (self.selectedPortals.length === 3) {
             $('#find-hcf-plan').prop('disabled', false);
-        }
+            $('#find-hcf-plan').css('cursor', 'pointer')
+        } else {
+            $('#find-hcf-plan').prop('disabled', false);
+            $('#find-hcf-plan').css('cursor', 'not-allowed')
+
+        };
+
     };
 
     // Add this after countKeys function
