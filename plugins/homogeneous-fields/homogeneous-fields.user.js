@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: 57Cell's Field Planner
-// @version      2.1.2.20230731
+// @version      2.1.2.20230801
 // @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,6 +23,9 @@
 // ==/UserScript==
 
 /** Version History
+2.1.2.20230801
+NEW: Improved animated corners: Selected portals get animated Triangles when hovering the preview images. (Heistergand)
+
 2.1.2.20230731
 NEW: Add selected portals images in the dialog. (Heistergand)
 NEW: Add animated corners: Selected portals get animated circles when hovering the preview images. (Heistergand)
@@ -878,7 +881,7 @@ function wrapper(plugin_info) {
     self.cornerPreviewPlaceholderHTML = '<fieldset ' +
         'title="<empty>" ' +
         'style="' +
-        'height: 140px; ' +
+        'height: 100px; ' +
         'width: -webkit-fill-available;'+
         'cursor: help;' +
         'background: no-repeat center center;' +
@@ -939,11 +942,11 @@ function wrapper(plugin_info) {
                 id: 'hcf-plan-view',
                 html: self.dialog_html,
                 width: '40%',
-                minHeight: 450,
+                minHeight: 460,
             });
             self.attachEventHandler();
             self.updateDialog();
-            $('#dialog-hcf-plan-view').css("height", "300px");
+            $('#dialog-hcf-plan-view').css("height", "370px");
         }
     };
 
@@ -960,7 +963,7 @@ function wrapper(plugin_info) {
      *
      * @param {string} portalGuid - The GUID of the portal.
      */
-    function animateCircle(guid) {
+    self.animateCircle = function(guid) {
         if (self.animationStartTime === null) {
             // Set the timestamp when the animation starts, but only if it's null
             self.animationStartTime = performance.now();
@@ -1006,7 +1009,7 @@ function wrapper(plugin_info) {
                 // Reset the circle layer to its initial state
                 circle.setRadius(minRadius);
                 // Reset the self.animationStartTime so it can start fresh on the next hover
-                self.animationStartTime = performance.now();
+                self.animationStartTime = timestamp;
                 // repeat
                 self.animationRequestIds[guid] = requestAnimationFrame(updateRadius);
             }
@@ -1023,140 +1026,97 @@ function wrapper(plugin_info) {
 
         // const startTime = performance.now();
         self.animationRequestId = requestAnimationFrame(updateRadius);
-    }; // enod of animateCircle
+    }; // end of animateCircle
 
 
+    /**
+     * @summary Animates a triangle polygon pulsating around a given portal location.
+     * @description This function animates a triangle polygon on a portal location with a pulsating effect.
+     * @author AI Assistant: ChatGPT v4.0
+     * @author Heistergand
+     *
+     * @param {string} guid - The GUID of the portal.
+     */
+    self.animateTriangle = function(guid) {
+        const portalLocation = map.latLngToContainerPoint(portals[guid].getLatLng()); // Convert to pixel coordinates
+        const minTriangleRadius = 30;
+        const maxTriangleRadius = 38;
+        const triangleRotationSpeed = 0.02; // This can also be adjusted
+        const colorPulseFrequency = 0.8; // Hz
+        const triangleColorStart = 'ffff00'; // Yellow
+        const triangleColorEnd = 'ff0000'; // Red
+        const lineWeight = 3; // px
+
+        let rotationAngle = 0;
+        let triangleRadius = minTriangleRadius;
+
+        const triangleCoordinates = [
+            [0, triangleRadius],
+            [triangleRadius * Math.sqrt(3) / 2, -triangleRadius / 2],
+            [-triangleRadius * Math.sqrt(3) / 2, -triangleRadius / 2]
+        ].map(coord => [coord[0] + portalLocation.x, coord[1] + portalLocation.y]); // Translate to portal location
+
+        const triangle = L.polygon(triangleCoordinates.map(coord => map.containerPointToLatLng(coord)), { color: `#${triangleColorStart}`, weight: lineWeight }); // Convert back to geographical coordinates
+        triangle.addTo(self.highlightLayergroup);
+
+        let colorPulseStartTime = performance.now();
+
+        function animate(timestamp) {
+            let radius = triangleRadius + (Math.sin((timestamp - colorPulseStartTime) * 2 * Math.PI * colorPulseFrequency / 1000) + 1) / 2 * (maxTriangleRadius - minTriangleRadius); // Pulsate between min and max radius
+            const newTriangleCoordinates = triangleCoordinates.map(coord => {
+                const x = coord[0] - portalLocation.x;
+                const y = coord[1] - portalLocation.y;
+                const angle = Math.atan2(y, x) - rotationAngle;
+                const newX = portalLocation.x + radius * Math.cos(angle);
+                const newY = portalLocation.y + radius * Math.sin(angle);
+                return map.containerPointToLatLng([newX, newY]); // Convert back to geographical coordinates
+            });
+            triangle.setLatLngs(newTriangleCoordinates);
+
+            const triangleColor = interpolateColor(triangleColorStart, triangleColorEnd, (Math.sin((timestamp - colorPulseStartTime) * 2 * Math.PI * colorPulseFrequency / 1000) + 1) / 2); // Pulsate color between start and end color
+            const sideLength = calculateSideLength(radius); // Calculate side length based on current radius
+            const sectorLength = sideLength / 3 ; // Divide side length into three sectors
+            triangle.setStyle({
+                color: `#${triangleColor}`,
+                dashArray: [sectorLength, sectorLength, 2 * sectorLength, sectorLength, 2 * sectorLength, sectorLength, sectorLength]
+            }); // Set dashArray style
 
 
-    //     /**
-    //  * @summary Animates a triangle expanding and shrinking from a given portal location (New animation).
-    //  * @description This function animates a triangle that expands and then shrinks back from a portal location.
-    //  *
-    //  * @param {string} guid - The GUID of the portal.
-    //  */
-    //     function animateTriangle(guid) {
-    //         if (self.animationStartTime === null) {
-    //             // Set the timestamp when the animation starts, but only if it's null
-    //             self.animationStartTime = performance.now();
-    //         }
+            rotationAngle += triangleRotationSpeed;
+            self.animationRequestIds[guid] = requestAnimationFrame(animate);
+        }
 
-    //         const minDistance = 30; // Set the minimum distance to 30
-    //         const maxDistance = 100; // Set the maximum distance to 100
-    //         const animationDuration = 1000; // Adjust the animation speed as needed
+        self.animationRequestIds[guid] = requestAnimationFrame(animate);
 
-    //         const portalLatLng = portals[guid].getLatLng();
-    //         const triangleOptions = {
-    //             color: 'blue',
-    //             weight: 4,
-    //             fillOpacity: 0, // Make the triangle transparent
-    //             dashArray: calculateTriangleDashArray(minDistance), // Initial dashArray for minimum distance
-    //         };
+        // Calculate the side length of an equilateral triangle based on the radius
+        function calculateSideLength(radius) {
+            return radius * Math.sqrt(3);
+        }
 
-    //         const triangle = L.polygon([], triangleOptions);
-    //         triangle.addTo(self.highlightLayergroup);
-    //         self.circleAnimationLayers[guid] = triangle;
+        // Interpolates between two colors in hexadecimal format
+        function interpolateColor(colorStart, colorEnd, interpolationFactor) {
+            const startRGB = hexToRgb(colorStart);
+            const endRGB = hexToRgb(colorEnd);
 
-    //         /**
-    //    * Updates the triangle's size for the animation.
-    //    *
-    //    * @param {DOMHighResTimeStamp} timestamp - The current timestamp.
-    //    */
-    //         function updateTriangleSize(timestamp) {
-    //             const progress = timestamp - self.animationStartTime;
-    //             let distance = (progress / animationDuration) * (maxDistance - minDistance);
+            const resultRGB = [
+                Math.round(startRGB[0] + interpolationFactor * (endRGB[0] - startRGB[0])),
+                Math.round(startRGB[1] + interpolationFactor * (endRGB[1] - startRGB[1])),
+                Math.round(startRGB[2] + interpolationFactor * (endRGB[2] - startRGB[2]))
+            ];
 
-    //             if (distance < maxDistance) {
-    //                 // For expanding
-    //                 updateTriangleVertices(calculateTriangleLatLngs(portalLatLng, distance));
-    //                 triangle.setStyle({ dashArray: calculateTriangleDashArray(distance) });
-    //             } else {
-    //                 // For shrinking
-    //                 updateTriangleVertices(calculateTriangleLatLngs(portalLatLng, maxDistance - (distance - maxDistance)));
-    //                 triangle.setStyle({ dashArray: calculateTriangleDashArray(maxDistance - (distance - maxDistance)) });
-    //             }
+            return rgbToHex(resultRGB);
+        }
 
-    //             // Request the next animation frame until the animation duration is reached
-    //             if (progress < animationDuration) {
-    //                 self.animationRequestIds[guid] = requestAnimationFrame(updateTriangleSize);
-    //             } else {
-    //                 // Reset the animation start time for the next animation cycle
-    //                 self.animationStartTime = performance.now();
-    //                 // Request the next animation frame for the next cycle
-    //                 self.animationRequestIds[guid] = requestAnimationFrame(updateTriangleSize);
-    //             }
-    //         }
+        // Converts a color from hexadecimal to RGB format
+        function hexToRgb(hex) {
+            return [parseInt(hex.substring(0, 2), 16), parseInt(hex.substring(2, 4), 16), parseInt(hex.substring(4, 6), 16)];
+        }
 
-    //         // Remove the previous animation layer if it exists
-    //         const previousAnimationLayer = self.circleAnimationLayers[guid];
-    //         if (previousAnimationLayer) {
-    //             previousAnimationLayer.remove();
-    //         }
-
-    //         // Create the initial triangle at the portal location with minimum distance
-    //         updateTriangleVertices(calculateTriangleLatLngs(portalLatLng, minDistance));
-
-    //         // Start the animation
-    //         self.animationRequestIds[guid] = requestAnimationFrame(updateTriangleSize);
-    //     }
-
-    //     /**
-    //  * Updates the triangle's vertices.
-    //  *
-    //  * @param {Array} vertices - An array of coordinates representing the triangle's vertices.
-    //  */
-    //     function updateTriangleVertices(vertices) {
-    //         const triangle = self.circleAnimationLayers[guid];
-    //         if (triangle) {
-    //             triangle.setLatLngs(vertices);
-    //         }
-    //     }
-
-    //     /**
-    //  /**
-    //  * Calculates the coordinates of the triangle's vertices based on the centroid and the distance to a vertex.
-    //  *
-    //  * @param {L.LatLng} centroid - The centroid of the triangle.
-    //  * @param {number} distance - The distance between the centroid and a vertex.
-    //  * @returns {Array} An array of coordinates representing the triangle's vertices.
-    //  */
-    //     function calculateTriangleLatLngs(centroid, distance) {
-    //         const angle = (2 * Math.PI) / 3; // 120 degrees in radians
-    //         const x0 = centroid.lng;
-    //         const y0 = centroid.lat;
-    //         const x1 = x0 + distance * Math.cos(angle);
-    //         const y1 = y0 + distance * Math.sin(angle);
-    //         const x2 = x0 + distance * Math.cos(angle * 2);
-    //         const y2 = y0 + distance * Math.sin(angle * 2);
-    //         return [
-    //             [y0, x0], // Starting vertex (centroid)
-    //             [y1, x1], // Vertex at 120 degrees
-    //             [y2, x2], // Vertex at 240 degrees
-    //             [y0, x0], // Closing the shape by connecting back to Vertex 1 (centroid)
-    //         ];
-    //     }
-
-    //     /**
-    //  * Calculates the dashArray for the equilateral triangle to show only the middle third of each side.
-    //  *
-    //  * @param {number} distance - The distance between the centroid and a vertex of the equilateral triangle.
-    //  * @returns {string} The dashArray for the triangle's `L.polygon`.
-    //  */
-    //     function calculateTriangleDashArray(distance) {
-    //         const perimeter = distance * 3; // Perimeter of the equilateral triangle
-    //         const sectorLength = perimeter / 9; // Length of each sector (dash + gap)
-
-    //         const dashArray = [
-    //             `${(sectorLength / 9).toFixed(2)}px`, // 1/9 of a sector (blank)
-    //             `${(sectorLength / 9).toFixed(2)}px`, // 1/9 of a sector (line)
-    //             `${(2 * (sectorLength / 9)).toFixed(2)}px`, // 2/9 of a sector (blank)
-    //             `${(sectorLength / 9).toFixed(2)}px`, // 1/9 of a sector (line)
-    //             `${(2 * (sectorLength / 9)).toFixed(2)}px`, // 2/9 of a sector (blank)
-    //             `${(sectorLength / 9).toFixed(2)}px`, // 1/9 of a sector (line)
-    //             `${(sectorLength / 9).toFixed(2)}px`, // 1/9 of a sector (line) to close the triangle
-    //         ];
-
-    //         return dashArray.join(', ');
-    //     }
+        // Converts a color from RGB to hexadecimal format
+        function rgbToHex(rgb) {
+            return rgb.map(value => value.toString(16).padStart(2, '0')).join('');
+        }
+    }
 
     // Constants for animation styles
     const ANIMATION_STYLE_DEFAULT = 'default';
@@ -1166,7 +1126,8 @@ function wrapper(plugin_info) {
     self.animationStartTime = null; // Timestamp when the animation starts
 
     // Set the default animation style
-    let currentAnimationStyle = ANIMATION_STYLE_DEFAULT;
+    // let currentAnimationStyle = ANIMATION_STYLE_DEFAULT;
+    let currentAnimationStyle = ANIMATION_STYLE_TRIANGLE;
 
 
 
@@ -1232,9 +1193,9 @@ function wrapper(plugin_info) {
             }
             self.selectedPortals.forEach(({guid, details}) => {
                 if (currentAnimationStyle === ANIMATION_STYLE_DEFAULT) {
-                    animateCircle(guid);
+                    self.animateCircle(guid);
                 } else if (currentAnimationStyle === ANIMATION_STYLE_TRIANGLE) {
-                    animateTriangle(guid);
+                    self.animateTriangle(guid);
                 }
             });
 
@@ -1252,6 +1213,7 @@ function wrapper(plugin_info) {
             self.animationStartTime = null;
             // Clear the animationRequestIds object after canceling the animations
             self.animationRequestIds = {};
+            self.circleAnimationLayers = {};
             if (window.map.hasLayer(self.highlightLayergroup)) {
                 self.highlightLayergroup.clearLayers();
             }
@@ -1368,7 +1330,7 @@ function wrapper(plugin_info) {
             portalDetailsHTML += '<fieldset ' +
                 'title="' + details.title + '" ' +
                 'style="' +
-                'height: 140px; ' +
+                'height: 100px; ' +
                 'width: -webkit-fill-available;'+
                 'cursor: help;' +
                 'background: no-repeat center center;' +
