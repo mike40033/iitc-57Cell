@@ -25,6 +25,7 @@
 /** Version History
 2.1.2.20230801
 NEW: Improved animated corners: Selected portals get animated Triangles when hovering the preview images. (Heistergand)
+NEW: Add color picker
 
 2.1.2.20230731
 NEW: Add selected portals images in the dialog. (Heistergand)
@@ -893,8 +894,20 @@ function wrapper(plugin_info) {
         '<legend class="ui-dialog-titlebar">&lt;empty&gt;</legend>select a portal</fieldset>\n';
 
 
+
+    //
+    // <p>I'll generate a fielding plan with corners:</p>
+    // <p>Color: <input type="color" id="colorPicker" value="#ff0000"></p>
+    // </div>
+
+
     // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
-    self.dialog_html = '<div id="hcf-plan-container" style="height: inherit; display: flex; flex-direction: column; align-items: stretch;">\n' +
+    self.dialog_html = '<div id="hcf-plan-container" ' +
+        '                    style="height: inherit; display: flex; flex-direction: column; align-items: stretch;">\n' +
+        '   <div style="display: flex;justify-content: space-between;align-items: center;">' +
+        '      <p>I\'ll generate a fielding plan with corners:</p>' +
+        '      <p>Color: <input type="color" id="hcf-colorPicker" value="#ff0000"></p>' +
+        '   </div>' +
         '    <div id="hcf-portal-details">' +
         self.cornerPreviewPlaceholderHTML +
         self.cornerPreviewPlaceholderHTML +
@@ -920,10 +933,10 @@ function wrapper(plugin_info) {
         '      <br>'+
         '      <div id="hcf-layers-container">\n' +
         '        <label for="layers">Layers: </label>\n' +
-        '        <input type="number" id="layers" min="1" max="6" value="3"><br>\n' +
+        '        <input type="number" id="layers" min="1" max="6" value="3">\n' +
         '      </div>\n' +
         '    </fieldset>\n' +
-        '    <div id="hcf-buttons-container">\n' +
+        '    <div id="hcf-buttons-container" style="margin: 3px;">\n' +
         '      <button id="find-hcf-plan" style="cursor: pointer" style="margin: 2px;">Find Fielding Plan</button>'+
         '      <button id="hcf-to-dt-btn" style="cursor: pointer" hidden>Export to DrawTools</button>'+
         '      <button id="hcf-to-arc-btn" style="cursor: pointer" hidden>Export to Arc</button>'+
@@ -1218,7 +1231,16 @@ function wrapper(plugin_info) {
                 self.highlightLayergroup.clearLayers();
             }
         });
-    }
+
+        // color picker event:
+        $("#hcf-colorPicker").change(function() {
+            console.log('HCF Selected color:', this.value); // Output the selected color
+            self.linkStyle.color = this.value;
+            self.fieldStyle.fillColor = this.value;
+            self.updateLayer();
+        });
+
+    } // end of attachEventHandler
 
     self.find_hcf_plan = function() {
         // Get selected portals and desired level
@@ -1322,7 +1344,7 @@ function wrapper(plugin_info) {
         portalDetailsDiv.empty();
 
         // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
-        portalDetailsHTML += '<p>I\'ll generate a fielding plan with corners:</p><div id="hcf-portal-images" style="display: flex; justify-content: space-evenly;">\n';
+        portalDetailsHTML += '<div id="hcf-portal-images" style="display: flex; justify-content: space-evenly;">\n';
         // debugger;
 
         self.selectedPortals.forEach(({guid, details}) => {
