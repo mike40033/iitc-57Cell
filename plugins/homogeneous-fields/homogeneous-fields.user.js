@@ -38,6 +38,9 @@ FIX: Portal selection does not affect plugin while dialog is not open. (Heisterg
 2.1.1.20230727
 FIX: Dialog UI improvements (Heistergand)
 
+2.1.1.20230727
+FIX: Dialog UI improvements (Heistergand)
+
 2.1.0.20230726
 NEW: Option to generate Cobweb fielding plans (57Cell)
 
@@ -1147,6 +1150,7 @@ function wrapper(plugin_info) {
 
 
 
+
     self.attachEventHandler = function() {
         $("#hcf-simulator-btn").click(function() {
             self.simulator(self.plan);
@@ -1346,7 +1350,7 @@ function wrapper(plugin_info) {
         // wipe placeholders and previous images
         portalDetailsDiv.empty();
 
-        // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
+      // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
         portalDetailsHTML += '<div id="hcf-portal-images" style="display: flex; justify-content: space-evenly;">\n';
         // debugger;
 
