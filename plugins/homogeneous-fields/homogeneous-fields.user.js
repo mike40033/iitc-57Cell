@@ -38,9 +38,6 @@ FIX: Portal selection does not affect plugin while dialog is not open. (Heisterg
 2.1.1.20230727
 FIX: Dialog UI improvements (Heistergand)
 
-2.1.1.20230727
-FIX: Dialog UI improvements (Heistergand)
-
 2.1.0.20230726
 NEW: Option to generate Cobweb fielding plans (57Cell)
 
