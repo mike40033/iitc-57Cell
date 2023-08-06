@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: 57Cell's Field Planner
-// @version      2.1.0.20230726
+// @version      2.1.1.20230727
 // @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,6 +23,9 @@
 // ==/UserScript==
 
 /** Version History
+
+2.1.1.20230727
+FIX: Dialog UI improvements (Heistergand)
 
 2.1.0.20230726
 NEW: Option to generate Cobweb fielding plans (57Cell)
@@ -126,6 +129,9 @@ function wrapper(plugin_info) {
         this.subHCFs = subHCFs;
     };
 
+    // initialize plan.
+    self.plan = null;
+
     self.updateLayer = function(){
         if (self.plan) {
             self.drawPlan(self.plan);
@@ -135,15 +141,6 @@ function wrapper(plugin_info) {
     self.setup = function() {
         // Add button to toolbox
         $('#toolbox').append('<a onclick="window.plugin.homogeneousFields.openDialog(); return false;">Plan Fields</a>');
-
-        // Add styles
-        $('head').append('<style>' +
-                         '#dialog-hcf-plan-view {' +
-                         '   width: 900px;' +
-                         '   height: 800px;' +
-                         '   overflow-y: auto;' +
-                         '}' +
-                         '</style>');
 
         // Add event listener for portal selection
         window.addHook('portalSelected', self.portalSelected);
@@ -299,7 +296,7 @@ function wrapper(plugin_info) {
 
 
 
-        /** @function calculateCentroid
+    /** @function calculateCentroid
      * get the portal GUID which is nearest
      * to the centroid point of all given GUIDs.
      * @param {array} GUIDs List of portal GUIDs
@@ -309,8 +306,8 @@ function wrapper(plugin_info) {
         let target = self.toLatLonObjects([targetGUID])[0].ll;
         return self.getClosestToTarget(list, target);
     };
-    
-    
+
+
     /**
     * @function self.findHCF
     * @param {int} Level
@@ -324,7 +321,7 @@ function wrapper(plugin_info) {
             // Base case: return a level 1 HCF
             return self.constructHCF(level, corners, null, []);
         }
-        
+
         let portalsNeeded = [-1,0,1,4,13,40,121];
         if (fieldType == 'hcf' && portalsInTriangle.length < portalsNeeded[level]) // not enough portals, fail immediately
             return null;
@@ -368,7 +365,7 @@ function wrapper(plugin_info) {
                         candidates = candidates.filter(portal => portal !== central);
                     }
                     break;
-                } 
+                }
                 subHCFs.push(subHCF);
             }
 
@@ -379,7 +376,7 @@ function wrapper(plugin_info) {
         }
 
         return null; // Failed to construct HCF after all candidates have been tried
-    
+
     };
 
     // helper function to recursively populate the portal data structure
@@ -576,10 +573,10 @@ function wrapper(plugin_info) {
                 leastMaxOutgoingLinks = maxLinks;
             }
             // keep the path if all of the following are true:
-            // (a) it's shorter, 
-            // (b) it doesn't need Matryoska links OR Matryoska links are allowed, 
+            // (a) it's shorter,
+            // (b) it doesn't need Matryoska links OR Matryoska links are allowed,
             // (c) it doesn't exceed outgoing link limits, unless we haven't been able to meet those limits
-            if (newLength < bestLength 
+            if (newLength < bestLength
                 && (!disallowMatryoska || !self.requiresMatryoskaLinks(portalData, newPath))
                 && maxLinks <= Math.max(maxOutgoingLinksPermitted, leastMaxOutgoingLinks)) {
                 bestPath = newPath;
@@ -866,49 +863,52 @@ function wrapper(plugin_info) {
         return plan;
     };
 
+    self.dialog_html = '<div id="hcf-plan-container" style="height: inherit; display: flex; flex-direction: column; align-items: stretch;">\n' +
+        '    <div id="hcf-portal-details">Choose three portals</div>\n' +
+        '    <fieldset style="margin: 2px;">\n'+
+        '      <legend>Options</legend>\n'+
+        '      <label for="field-type">Field type: </label>\n' +
+        '      <input type="radio" id="field-type-hcf" name="field-type" value="hcf" checked>\n' +
+        '      <label for="field-type-hcf" title="generate a homogeneous fielding plan">Homogeneous Fields</label>\n' +
+        '      <input type="radio" id="field-type-general" name="field-type" value="general">\n' +
+        '      <label for="field-type-general" title="generate a general maximum fielding plan">General Maximum Fielding</label>\n' +
+        '      <input type="radio" id="field-type-cobweb" name="field-type" value="cobweb">\n' +
+        '      <label for="field-type-cobweb" title="generate a cobweb fielding plan">Cobweb Plan</label>\n' +
+        '      <br>'+
+        '      <div id="hcf-mode-container">\n' +
+        '        <label for="hcf-mode">Geometry: </label>\n' +
+        '        <input type="radio" id="hcf-mode-random" name="hcf-mode" value="random" checked>\n' +
+        '        <label for="hcf-mode-random" title="generate a geometrically randomised plan">Random</label>\n' +
+        '        <input type="radio" id="hcf-mode-perfect" name="hcf-mode" value="perfect">\n' +
+        '        <label for="hcf-mode-perfect" title="generate a geometrically perfectly balanced plan">Perfect</label>\n' +
+        '      </div>\n' +
+        '      <br>'+
+        '      <div id="hcf-layers-container">\n' +
+        '        <label for="layers">Layers: </label>\n' +
+        '        <input type="number" id="layers" min="1" max="6" value="3"><br>\n' +
+        '      </div>\n' +
+        '    </fieldset>\n' +
+        '    <div id="hcf-buttons-container">\n' +
+        '      <button id="find-hcf-plan" style="margin: 2px;">Find Fielding Plan</button>'+
+        '      <button id="hcf-to-dt-btn" hidden>Export to DrawTools</button>'+
+        '      <button id="hcf-to-arc-btn" hidden>Export to Arc</button>'+
+        '    </div>\n' +
+        '    <br>\n' +
+        '    <textarea readonly id="hcf-plan-text" style="height:inherit;width: auto;margin:2px;resize:none"></textarea>\n'+
+        '</div>\n';
 
     // Attach click event to find-hcf-plan-button after the dialog is created
     self.openDialog = function() {
         dialog({
             title: 'Fielding Plan View',
             id: 'dialog-hcf-plan-view',
-            html: '<div id="hcf-portal-details">Choose three portals</div>\n' +
-
-            '<fieldset style="margin: 2px;">\n'+
-            '<legend>Options</legend>\n'+
-            '  <label for="field-type">Field type: </label>\n' +
-            '  <input type="radio" id="field-type-hcf" name="field-type" value="hcf" checked>\n' +
-            '  <label for="field-type-hcf" title="generate a homogeneous fielding plan">Homogeneous Fields</label>\n' +
-            '  <input type="radio" id="field-type-general" name="field-type" value="general">\n' +
-            '  <label for="field-type-general" title="generate a general maximum fielding plan">General Maximum Fielding</label>\n' +
-            '  <input type="radio" id="field-type-cobweb" name="field-type" value="cobweb">\n' +
-            '  <label for="field-type-cobweb" title="generate a cobweb fielding plan">Cobweb Plan</label>\n' +
-            '<br>'+
-            '  <div id="mode-container">\n' +
-            '  <label for="hcf-mode">Geometry: </label>\n' +
-            '  <input type="radio" id="hcf-mode-random" name="hcf-mode" value="random" checked>\n' +
-            '  <label for="hcf-mode-random" title="generate a geometrically randomised plan">Random</label>\n' +
-            '  <input type="radio" id="hcf-mode-perfect" name="hcf-mode" value="perfect">\n' +
-            '  <label for="hcf-mode-perfect" title="generate a geometrically perfectly balanced plan">Perfect</label>\n' +
-            '  </div>\n' +
-            '<br>'+
-            '  <div id="layers-container">\n' +
-            '    <label for="layers">Layers: </label>\n' +
-            '    <input type="number" id="layers" min="1" max="6" value="3"><br>\n' +
-            '  </div>\n' +
-            '</fieldset>\n' +
-
-            '<button id="find-hcf-plan" style="margin: 2px;">Find Fielding Plan</button>'+
-            '<button id="hcf-to-dt-btn" hidden>Export to DrawTools</button>'+
-            '<button id="hcf-to-arc-btn" hidden>Export to Arc</button>'+
-            '<br>\n' +
-            '<textarea readonly id="hcf-plan-text" style="height:200px;width:98%;margin:2px"></textarea>\n',
-            width: '40%'
+            html: self.dialog_html,
+            width: '40%',
+            minHeight: 350,
         });
         self.attachEventHandler();
+        $('#dialog-dialog-hcf-plan-view').css("height", "300px");
     };
-
-    self.plan = null;
 
     self.attachEventHandler = function() {
         $("#hcf-to-arc-btn").click(function() {
@@ -918,22 +918,22 @@ function wrapper(plugin_info) {
 
         $("#field-type-general").change(function() {
             if ($(this).is(":checked")) {
-                $("#layers-container").css("display", "none");
-                $("#mode-container").css("display", "block");
+                $("#hcf-layers-container").css("display", "none");
+                $("#hcf-mode-container").css("display", "block");
             }
         });
-        
+
         $("#field-type-cobweb").change(function() {
             if ($(this).is(":checked")) {
-                $("#layers-container").css("display", "none");
-                $("#mode-container").css("display", "none");
+                $("#hcf-layers-container").css("display", "none");
+                $("#hcf-mode-container").css("display", "none");
             }
         });
 
         $("#field-type-hcf").change(function() {
             if ($(this).is(":checked")) {
-                $("#layers-container").css("display", "block");
-                $("#mode-container").css("display", "block");
+                $("#hcf-layers-container").css("display", "block");
+                $("#hcf-mode-container").css("display", "block");
             }
         });
 
@@ -1036,14 +1036,15 @@ function wrapper(plugin_info) {
         // Update portal details in dialog
         let portalDetailsDiv = $('#hcf-portal-details');
         portalDetailsDiv.empty();
-        portalDetailsDiv.append("<p>I'll generate a fielding plan with corners:<ul>");
+        portalDetailsDiv.append("<p>I'll generate a fielding plan with corners:<ul>\n");
         for (let portalDetails of self.selectedPortalDetails) {
-            portalDetailsDiv.append('<li>' + portalDetails.title + '</li>');
+            portalDetailsDiv.append('<li>' + portalDetails.title + '</li>\n');
         }
         if (self.selectedPortalDetails.length < 3) {
-            portalDetailsDiv.append('<li>Please select ' + (3-self.selectedPortalDetails.length) + ' more</li>');
+            portalDetailsDiv.append('<li>Please select ' + (3-self.selectedPortalDetails.length) + ' more</li>\n');
         }
         portalDetailsDiv.append('</ul>');
+        $('#hcf-plan-text').val(portalDetailsDiv.text());
 
         // Enable "Find HCF Plan" button if three portals have been selected
         if (self.selectedPortals.length === 3) {
