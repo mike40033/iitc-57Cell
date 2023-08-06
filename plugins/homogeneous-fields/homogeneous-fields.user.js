@@ -885,8 +885,9 @@ function wrapper(plugin_info) {
         'title="<empty>" ' +
         'style="' +
         'height: 100px; ' +
-        'width: -moz-available; ' + // WebKit-based browsers will ignore this.
-        'width: -webkit-fill-available; ' + // Mozilla-based browsers will ignore this.
+        //'width: -moz-available; ' + // WebKit-based browsers will ignore this.
+        //'width: -webkit-fill-available; ' + // Mozilla-based browsers will ignore this.
+        'flex: 1 1 30%;' +
         'cursor: help; ' +
         'background: no-repeat center center; ' +
         'background-size: cover; ' +
@@ -911,11 +912,11 @@ function wrapper(plugin_info) {
         '      <p>I\'ll generate a fielding plan with corners:</p>' +
         '      <p>Color: <input type="color" id="hcf-colorPicker" value="#ff0000"></p>' +
         '   </div>' +
-        '    <div id="hcf-portal-details">' +
+        '    <div id="hcf-portal-details"><div id="hcf-portal-images" style="display: flex;justify-content: space-evenly;"' +
         self.cornerPreviewPlaceholderHTML +
         self.cornerPreviewPlaceholderHTML +
         self.cornerPreviewPlaceholderHTML +
-        '</div>\n' +
+        '</div></div>\n' +
         '    <fieldset style="margin: 2px;">\n'+
         '      <legend>Options</legend>\n'+
         '      <label for="field-type">Field type: </label>\n' +
@@ -1147,7 +1148,6 @@ function wrapper(plugin_info) {
 
 
 
-
     self.attachEventHandler = function() {
         $("#hcf-simulator-btn").click(function() {
             self.simulator(self.plan);
@@ -1347,8 +1347,8 @@ function wrapper(plugin_info) {
         // wipe placeholders and previous images
         portalDetailsDiv.empty();
 
-      // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
-        portalDetailsHTML += '<div id="hcf-portal-images" style="display: flex; justify-content: space-evenly;">\n';
+        // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
+        portalDetailsHTML += '<div id="hcf-portal-images" style="display: flex;justify-content: space-evenly;">\n';
         // debugger;
 
         self.selectedPortals.forEach(({guid, details}) => {
@@ -1357,8 +1357,9 @@ function wrapper(plugin_info) {
                 'title="' + details.title + '" ' +
                 'style="' +
                 'height: 100px; ' +
-                'width: -moz-available; ' + // WebKit-based browsers will ignore this.
-                'width: -webkit-fill-available; ' + // Mozilla-based browsers will ignore this.
+                //'width: -moz-available; ' + // WebKit-based browsers will ignore this.
+                //'width: -webkit-fill-available; ' + // Mozilla-based browsers will ignore this.
+                'flex: 1 1 30%;' +
                 'cursor: help; ' +
                 'background: no-repeat center center; ' +
                 'background-size: cover; ' +
