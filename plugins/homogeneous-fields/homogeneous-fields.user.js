@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: 57Cell's Field Planner
-// @version      2.1.2.20230801
+// @version      2.1.2.20230806
 // @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,9 +23,11 @@
 // ==/UserScript==
 
 /** Version History
+2.1.2.20230806
+FIX: UI Issues regarding Webikit/Mozilla CSS
+
 2.1.2.20230801
 NEW: Improved animated corners: Selected portals get animated Triangles when hovering the preview images. (Heistergand)
-NEW: Add color picker
 
 2.1.2.20230731
 NEW: Add selected portals images in the dialog. (Heistergand)
@@ -883,9 +885,10 @@ function wrapper(plugin_info) {
         'title="<empty>" ' +
         'style="' +
         'height: 100px; ' +
-        'width: -webkit-fill-available;'+
-        'cursor: help;' +
-        'background: no-repeat center center;' +
+        'width: -moz-available; ' + // WebKit-based browsers will ignore this.
+        'width: -webkit-fill-available; ' + // Mozilla-based browsers will ignore this.
+        'cursor: help; ' +
+        'background: no-repeat center center; ' +
         'background-size: cover; ' +
         // 'background-image: url(\'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==\')' +
         'background-image: url(\'//commondatastorage.googleapis.com/ingress.com/img/default-portal-image.png\')' +
@@ -1353,9 +1356,10 @@ function wrapper(plugin_info) {
                 'title="' + details.title + '" ' +
                 'style="' +
                 'height: 100px; ' +
-                'width: -webkit-fill-available;'+
-                'cursor: help;' +
-                'background: no-repeat center center;' +
+                'width: -moz-available; ' + // WebKit-based browsers will ignore this.
+                'width: -webkit-fill-available; ' + // Mozilla-based browsers will ignore this.
+                'cursor: help; ' +
+                'background: no-repeat center center; ' +
                 'background-size: cover; ' +
                 'background-image: url(\'' + details.image + '\')' +
                 '"' + // end of style
