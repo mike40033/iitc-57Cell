@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: 57Cell's Field Planner
-// @version      2.1.2.20230806
+// @version      2.1.2.20230808
 // @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,7 +23,7 @@
 // ==/UserScript==
 
 /** Version History
-2.1.2.20230806
+2.1.2.20230808
 FIX: UI Issues regarding Webikit/Mozilla CSS
 
 2.1.2.20230801
@@ -885,6 +885,7 @@ function wrapper(plugin_info) {
         'title="<empty>" ' +
         'style="' +
         'height: 100px; ' +
+        'min-inline-size: 0px; ' +
         //'width: -moz-available; ' + // WebKit-based browsers will ignore this.
         //'width: -webkit-fill-available; ' + // Mozilla-based browsers will ignore this.
         'flex: 1 1 30%;' +
@@ -895,14 +896,7 @@ function wrapper(plugin_info) {
         'background-image: url(\'//commondatastorage.googleapis.com/ingress.com/img/default-portal-image.png\')' +
         '"' + // end of style
         '>' +
-        '<legend class="ui-dialog-titlebar">&lt;empty&gt;</legend>select a portal</fieldset>\n';
-
-
-
-    //
-    // <p>I'll generate a fielding plan with corners:</p>
-    // <p>Color: <input type="color" id="colorPicker" value="#ff0000"></p>
-    // </div>
+        '<legend class="ui-dialog-titlebar" style="min-inline-size:0px;">&lt;empty&gt;</legend>select a portal</fieldset>\n';
 
 
     // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
@@ -948,7 +942,7 @@ function wrapper(plugin_info) {
         '      <button id="hcf-clear-btn" style="cursor: pointer">Clear</button>'+
         '    </div>\n' +
         '    <br>\n' +
-        '    <textarea readonly id="hcf-plan-text" style="height:inherit;width: auto;margin:2px;resize:none"></textarea>\n'+
+        '    <textarea readonly id="hcf-plan-text" style="height:inherit;min-height:150px;width: auto;margin:2px;resize:none"></textarea>\n'+
         '</div>\n';
 
     // Attach click event to find-hcf-plan-button after the dialog is created
@@ -1357,6 +1351,7 @@ function wrapper(plugin_info) {
                 'title="' + details.title + '" ' +
                 'style="' +
                 'height: 100px; ' +
+                'min-inline-size: 0px; ' +
                 //'width: -moz-available; ' + // WebKit-based browsers will ignore this.
                 //'width: -webkit-fill-available; ' + // Mozilla-based browsers will ignore this.
                 'flex: 1 1 30%;' +
@@ -1367,7 +1362,7 @@ function wrapper(plugin_info) {
                 '"' + // end of style
                 'id="hcf-corner-preview-' + guid + '"' +
                 '>' +
-                '<legend class="ui-dialog-titlebar">'+details.title +'</legend></fieldset>\n';
+                '<legend class="ui-dialog-titlebar" style="min-inline-size: 0px;">'+details.title +'</legend></fieldset>\n';
         });
 
         // self.selectedPortalDetails
