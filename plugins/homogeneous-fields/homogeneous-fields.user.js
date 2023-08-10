@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: 57Cell's Field Planner
-// @version      2.1.2.20230808
+// @version      2.1.4.20230808
 // @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,6 +23,9 @@
 // ==/UserScript==
 
 /** Version History
+2.1.4.20230810
+NEW: Conserve screen real estate by removing vertical whitespace
+
 2.1.3.20230810
 NEW: Change link numbering scheme
 
@@ -912,8 +915,8 @@ function wrapper(plugin_info) {
     self.dialog_html = '<div id="hcf-plan-container" ' +
         '                    style="height: inherit; display: flex; flex-direction: column; align-items: stretch;">\n' +
         '   <div style="display: flex;justify-content: space-between;align-items: center;">' +
-        '      <p>I\'ll generate a fielding plan with corners:</p>' +
-        '      <p>Color: <input type="color" id="hcf-colorPicker" value="#ff0000"></p>' +
+        '      <span>I\'ll generate a fielding plan with corners:</span>' +
+        '      <span>Color: <input type="color" id="hcf-colorPicker" value="#ff0000"></span>' +
         '   </div>' +
         '    <div id="hcf-portal-details"><div id="hcf-portal-images" style="display: flex;justify-content: space-evenly;"' +
         self.cornerPreviewPlaceholderHTML +
@@ -929,7 +932,6 @@ function wrapper(plugin_info) {
         '      <label for="field-type-general" title="generate a general maximum fielding plan">General Maximum Fielding</label>\n' +
         '      <input type="radio" id="field-type-cobweb" name="field-type" value="cobweb">\n' +
         '      <label for="field-type-cobweb" title="generate a cobweb fielding plan">Cobweb Plan</label>\n' +
-        '      <br>'+
         '      <div id="hcf-mode-container">\n' +
         '        <label for="hcf-mode">Geometry: </label>\n' +
         '        <input type="radio" id="hcf-mode-random" name="hcf-mode" value="random" checked>\n' +
@@ -937,7 +939,6 @@ function wrapper(plugin_info) {
         '        <input type="radio" id="hcf-mode-perfect" name="hcf-mode" value="perfect">\n' +
         '        <label for="hcf-mode-perfect" title="generate a geometrically perfectly balanced plan">Perfect</label>\n' +
         '      </div>\n' +
-        '      <br>'+
         '      <div id="hcf-layers-container">\n' +
         '        <label for="layers">Layers: </label>\n' +
         '        <input type="number" id="layers" min="1" max="6" value="3">\n' +
@@ -950,7 +951,6 @@ function wrapper(plugin_info) {
         '      <button id="hcf-simulator-btn" style="cursor: pointer" hidden>Simulate</button>'+
         '      <button id="hcf-clear-btn" style="cursor: pointer">Clear</button>'+
         '    </div>\n' +
-        '    <br>\n' +
         '    <textarea readonly id="hcf-plan-text" style="height:inherit;min-height:150px;width: auto;margin:2px;resize:none"></textarea>\n'+
         '</div>\n';
 
