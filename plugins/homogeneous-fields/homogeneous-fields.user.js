@@ -23,6 +23,9 @@
 // ==/UserScript==
 
 /** Version History
+2.1.3.20230810
+NEW: Change link numbering scheme
+
 2.1.2.20230808
 FIX: UI Issues regarding Webikit/Mozilla CSS
 
@@ -606,7 +609,13 @@ function wrapper(plugin_info) {
 
     self.planToText = function(plan) {
         const nextChar = function(c) {
-            return c === 'z' ? 'A' : String.fromCharCode(c.charCodeAt(0) + 1);
+            if (c.length == 0)
+                return 'a';
+            let prefix = c.substring(0,c.length-1);
+            let suffix = c.charAt(c.length-1);
+            if (suffix == 'z') 
+                return nextChar(prefix) + 'a';
+            return prefix + String.fromCharCode(suffix.charCodeAt(0) + 1);
         }
 
         let maxSBUL = plan.reduce((max, item) => Math.max(max, item.sbul || 0), 0);
