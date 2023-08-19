@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: 57Cell's Field Planner
-// @version      2.1.4.20230808
+// @version      2.1.5.20230819
 // @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -23,11 +23,14 @@
 // ==/UserScript==
 
 /** Version History
+2.1.5.20230819
+NEW: Include distance traveled in the linking plan (57Cell)
+
 2.1.4.20230810
-NEW: Conserve screen real estate by removing vertical whitespace
+NEW: Conserve screen real estate by removing vertical whitespace (57Cell)
 
 2.1.3.20230810
-NEW: Change link numbering scheme
+NEW: Change link numbering scheme (57Cell)
 
 2.1.2.20230808
 FIX: UI Issues regarding Webikit/Mozilla CSS
@@ -634,15 +637,22 @@ function wrapper(plugin_info) {
         let keypos = 0;
 
         let statsText = "\nStats:\n";
-        let portalCount = 0, linkCount = 0, fieldCount = 0;
+        let portalCount = 0, linkCount = 0, fieldCount = 0, totalDistance = 0;
 
         $.each(plan, function(index, item) {
             // let pos = `${index + 1}`;
             if (item.action === 'capture') {
                 portalCount++;
                 sbulText = item.sbul === 0 ? "" : ` (${item.sbul} Softbank${(item.sbul == 1 ? "" : "s")})`;
-                planText += `${++stepPos}.`.padStart(4, '\xa0') + ` Capture ${item.portal.name}${sbulText}\n`;
+                if (item.vectorHere == null) {
+                    let CaptureText = `Capture ${item.portal.name}${sbulText}`
+                    planText += `${++stepPos}.`.padStart(4, '\xa0') + ` ${CaptureText}\n`;
+                } else {
+                    let CaptureText = `capture ${item.portal.name}${sbulText}`
+                    planText += `${++stepPos}.`.padStart(4, '\xa0') + ` Go ${item.vectorHere}, ${CaptureText}\n`;
+                }
                 linkPos = 'a';
+                totalDistance += item.distance;
             }
             else if (item.action === 'link') {
                 linkCount++;
@@ -660,10 +670,12 @@ function wrapper(plugin_info) {
         });
 
         let indentation = 8;
+        let distanceText = self.formatDistance(totalDistance);
         statsText +=
             "Portals".padEnd(indentation, '\xa0') + `: ${portalCount}\n` +
             "Links".padEnd(indentation, '\xa0') + `: ${linkCount}\n` +
-            "Fields".padEnd(indentation, '\xa0') + `: ${fieldCount}\n`;
+            "Fields".padEnd(indentation, '\xa0') + `: ${fieldCount}\n` +
+            "Distance".padEnd(indentation, '\xa0') + `: ${distanceText}\n`
 
 
         planText += keysText + statsText;
@@ -771,6 +783,39 @@ function wrapper(plugin_info) {
         }
     }
 
+    self.buildDirection = function(compass1, compass2, angle) {
+        if (angle == 0) return compass1;
+        if (angle == 45) return compass1 + compass2;
+        if (angle > 45) return self.buildDirection(compass2, compass1, 90-angle);
+        return compass1 + ' ' + angle + '° ' + compass2;
+    }
+
+    self.formatBearing = function(bearing) {
+        var bearingFromNorth = false;
+        bearing = (bearing + 360) % 360;
+        if (bearingFromNorth)
+            return bearing.toString().padStart(3, '0') + "°";
+        if (bearing <= 90) return self.buildDirection('N', 'E', bearing);
+        else if (bearing <= 180) return self.buildDirection('S', 'E', 180-bearing);
+        else if (bearing <= 270) return self.buildDirection('S', 'W', bearing-180);
+        else return self.buildDirection('N', 'W', 360-bearing);
+    }
+
+    self.formatDistance = function(distanceMeters) {
+        const feetInAMeter = 3.28084;
+        const milesInAMeter = 0.000621371;
+        const kmInAMeter = 0.001;
+        
+        if (distanceMeters < 1000) {
+            const distanceFeet = Math.round(distanceMeters * feetInAMeter);
+            return `${Math.round(distanceMeters)}m (${distanceFeet}ft)`;
+        } else {
+            const distanceKm = (distanceMeters * kmInAMeter).toFixed(2);
+            const distanceMiles = (distanceMeters * milesInAMeter).toFixed(2);
+            return `${distanceKm}km (${distanceMiles}mi)`;
+        }
+    }
+
     // function to generate the final plan
     self.generatePlan = function(portalData, path, hcfLevel, fieldType) {
 
@@ -819,6 +864,7 @@ function wrapper(plugin_info) {
             allLinks = [],
             stepNo = 0;
 
+        let prevPortalId = null;
         // add the steps of the path
         for (let portalId of path) {
             // plan += `Capture ${a.name}\n`;
@@ -827,17 +873,32 @@ function wrapper(plugin_info) {
             links.sort((n, m) => portalData[n].depth - portalData[m].depth);
             // calculate outgoing links and count softbanks
             let outgoingLinks = links.filter(linkId => path.indexOf(linkId) < path.indexOf(portalId));
-            let sbul = outgoingLinks.length <= 8 ? 0 : Math.floor((outgoingLinks.length-1)/8);
-
-
+            let sbul = outgoingLinks.length <= 8 ? 0 : Math.floor((outgoingLinks.length-1)/8);            
+            let vec = null;
+            let distance = 0;
+            if (prevPortalId != null) {
+                let prevLL = portalData[prevPortalId].latLng;
+                let thisLL = a.latLng;
+                distance = self.distance(prevLL, thisLL);
+                let diffLat = thisLL.lat - prevLL.lat;
+                let diffLng = thisLL.lng - prevLL.lng;
+                let bearing = Math.round(Math.atan2(diffLng * Math.cos(thisLL.lat * Math.PI / 180), diffLat) * 180 / Math.PI);
+                let bearingText = self.formatBearing(bearing);                
+                let distTex = self.formatDistance(distance)
+                vec = distTex+" "+bearingText;
+            }
 
             plan.push({
                 action: 'capture',
                 stepNo: ++stepNo,
                 portal: a,
-                sbul: sbul
+                sbul: sbul,
+                vectorHere: vec,
+                distance : distance
             });
 
+            prevPortalId = portalId;
+            
             for (let linkId of outgoingLinks) {
                 // keep track of all links we've already made
                 let b = portalData[linkId];
@@ -1397,7 +1458,6 @@ function wrapper(plugin_info) {
 
     };
 
-    // Add this after countKeys function
     self.distance = function(portal1, portal2) {
         return portal1.distanceTo(portal2);
     };
