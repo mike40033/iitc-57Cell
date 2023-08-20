@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id            iitc-plugin-homogeneous-fields@57Cell
 // @name         IITC Plugin: 57Cell's Field Planner
-// @version      2.1.5.20230819
+// @version      2.1.6.20230820
 // @description  Plugin for planning fields in IITC
 // @author       57Cell (Michael Hartley) and ChatGPT 4.0
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
@@ -22,7 +22,13 @@
 // @grant        none
 // ==/UserScript==
 
+pluginName = "57Cell's Field Planner";
+version = "2.1.6";
+
 /** Version History
+2.1.6.20230820
+NEW: Add a dialog with useful links (57Cell)
+
 2.1.5.20230819
 NEW: Include distance traveled in the linking plan (57Cell)
 
@@ -972,6 +978,27 @@ function wrapper(plugin_info) {
         '<legend class="ui-dialog-titlebar" style="min-inline-size:0px;">&lt;empty&gt;</legend>select a portal</fieldset>\n';
 
 
+    self.info_dialog_html = '<div id="more-info-container" '+
+    '                    style="height: inherit; display: flex; flex-direction: column; align-items: stretch;">\n' +
+    '   <div style="display: flex;justify-content: space-between;align-items: center;">\n' +
+    '      <span>This is '+pluginName+' version '+version+'. Follow the links below if you would like to:\n' +
+    '        <ul>\n'+
+    '          <li style="visibility:hidden;"> <a href="https://www.youtube.com/watch?v=LGCOUXZDEjU" target="_blank">Learn how to use this plugin</a></li>\n'+
+    '          <li> <a href="https://www.youtube.com/playlist?list=PLQ2GCHa7ljyP9pl0fmz5Z8U8Rx3_VZMVl" target="_blank"">Watch some videos on Homogeneous Fields</a></li>\n'+
+    '          <li> <a href="https://youtu.be/yvvrHEtkxGc" target="_blank">Learn about the Cobweb fielding plan</a></li>\n'+
+    '          <li> <a href="https://www.youtube.com/playlist?list=PLQ2GCHa7ljyPucSuNPGagiBZVjFxkOMpC" target="_blank">See videos on maximising your fields</a></li>\n'+
+    '          <li> <a href="https://github.com/Heistergand/fanfields2/raw/master/iitc_plugin_fanfields2.user.js" target="_blank">Get a plugin for Fanfields</a></li>\n'+
+    '          <li> <a href="https://www.youtube.com/playlist?list=PLQ2GCHa7ljyMBxNRWm1rmH8_vp3GJvxzN" target="_blank">Find out more about Fanfields</a></li>\n'+
+    '        </ul>\n' +
+    '      Contributing authors:\n' +
+    '        <ul>\n'+
+    '          <li> <a href="https://youtu.be/M1O2SehnPGw" target="_blank"">ChatGPT 4.0</a></li>\n'+
+    '          <li> <a href="https://www.youtube.com/@57Cell" target="_blank">@57Cell</a></li>\n'+
+    '          <li> <a href="https://www.youtube.com/@Heistergand" target="_blank">@Heistergand</a></li>\n'+
+    '        </ul>\n' +
+    '      </span>\n' +
+    '</div></div>';
+
     // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
     self.dialog_html = '<div id="hcf-plan-container" ' +
         '                    style="height: inherit; display: flex; flex-direction: column; align-items: stretch;">\n' +
@@ -1011,6 +1038,7 @@ function wrapper(plugin_info) {
         '      <button id="hcf-to-arc-btn" style="cursor: pointer" hidden>Export to Arc</button>'+
         '      <button id="hcf-simulator-btn" style="cursor: pointer" hidden>Simulate</button>'+
         '      <button id="hcf-clear-btn" style="cursor: pointer">Clear</button>'+
+        '      <button id="more-info" style="cursor: pointer" style="margin: 2px;">More Info</button>'+
         '    </div>\n' +
         '    <textarea readonly id="hcf-plan-text" style="height:inherit;min-height:150px;width: auto;margin:2px;resize:none"></textarea>\n'+
         '</div>\n';
@@ -1030,6 +1058,23 @@ function wrapper(plugin_info) {
             $('#dialog-hcf-plan-view').css("height", "370px");
         }
     };
+
+        // Attach click event to find-hcf-plan-button after the dialog is created
+    self.open_info_dialog = function() {
+        if (!self.infoDialogIsOpen()) {
+            dialog({
+                title: 'Plugin And Other Information',
+                id: 'hcf-info-view',
+                html: self.info_dialog_html,
+                width: '30%',
+                minHeight: 120,
+            });
+            self.attachEventHandler();
+            self.updateDialog();
+            $('#dialog-hcf-info-view').css("height", "220px");
+        }
+    };
+
 
     // Store the animation circle layers in an array to manipulate them later
     self.circleAnimationLayers = {};
@@ -1267,6 +1312,9 @@ function wrapper(plugin_info) {
             self.find_hcf_plan();
         });
 
+        $("#more-info").click(function() {
+            self.open_info_dialog();
+        });
 
         $("#hcf-portal-details").mouseover(function() {
             if (window.map.hasLayer(self.highlightLayergroup)) {
@@ -1400,6 +1448,10 @@ function wrapper(plugin_info) {
 
     self.dialogIsOpen = function() {
         return ($("#dialog-hcf-plan-view").hasClass("ui-dialog-content") && $("#dialog-hcf-plan-view").dialog('isOpen'));
+    };
+
+    self.infoDialogIsOpen = function() {
+        return ($("#dialog-hcf-info-view").hasClass("ui-dialog-content") && $("#dialog-hcf-info-view").dialog('isOpen'));
     };
 
     self.updateDialog = function() {
