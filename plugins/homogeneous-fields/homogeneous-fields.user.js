@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id             iitc-plugin-homogeneous-fields@57Cell
 // @name           IITC Plugin: 57Cell's Field Planner
-// @version        2.1.7.20231011
+// @version        2.1.8.20240202
 // @description    Plugin for planning fields in IITC
 // @author         57Cell (Michael Hartley) and ChatGPT 4.0
 // @category       Layer
@@ -26,6 +26,12 @@
 pluginName = "57Cell's Field Planner";
 version = "2.1.7";
 changeLog = [
+    {
+        version: '2.1.8.20240202',
+        changes: [
+            'FIX: Satisfy new internal toolbox API (Heistergand)',
+        ],
+    },
     {
         version: '2.1.7.20231011',
         changes: [
@@ -232,7 +238,11 @@ function wrapper(plugin_info) {
 
     self.setup = function() {
         // Add button to toolbox
-        $('#toolbox').append('<a onclick="window.plugin.homogeneousFields.openDialog(); return false;">Plan Fields</a>');
+        // $('#toolbox').append('<a onclick="window.plugin.homogeneousFields.openDialog(); return false;">Plan Fields</a>');
+        const buttonId = IITC.toolbox.addButton({
+            label: 'Plan Fields',
+            action: () => self.openDialog()
+        });
 
         // Add event listener for portal selection
         window.addHook('portalSelected', self.portalSelected);
