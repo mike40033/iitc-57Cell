@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id             iitc-plugin-homogeneous-fields@57Cell
 // @name           IITC Plugin: 57Cell's Field Planner
-// @version        2.1.7.20231011
+// @version        2.1.8.20240202
 // @description    Plugin for planning fields in IITC
 // @author         57Cell (Michael Hartley) and ChatGPT 4.0
 // @category       Layer
@@ -24,8 +24,14 @@
 // ==/UserScript==
 
 pluginName = "57Cell's Field Planner";
-version = "2.1.7";
+version = "2.1.8";
 changeLog = [
+    {
+        version: '2.1.8.20240202',
+        changes: [
+            'FIX: Satisfy new internal toolbox API (Heistergand)',
+        ],
+    },
     {
         version: '2.1.7.20231011',
         changes: [
@@ -157,11 +163,11 @@ changeLog = [
 function wrapper(plugin_info) {
     if (typeof window.plugin !== 'function') window.plugin = function() {};
     plugin_info.buildName = '';
-    plugin_info.dateTimeVersion = '2023-10-11-214542';
+    plugin_info.dateTimeVersion = '2024-02-02-180000';
     plugin_info.pluginId = '57CellsFieldPlanner';
 
     // PLUGIN START
-    console.log('loading hcf plugin')
+    console.log('Field Planner | loading plugin')
     var changelog = changeLog;
     let self = window.plugin.homogeneousFields = function() {};
 
@@ -232,7 +238,17 @@ function wrapper(plugin_info) {
 
     self.setup = function() {
         // Add button to toolbox
-        $('#toolbox').append('<a onclick="window.plugin.homogeneousFields.openDialog(); return false;">Plan Fields</a>');
+        // if (IITC.iitcBuildDate > '2023-11-20-071719')
+        console.debug('Field Planner | Checking IITC Version');
+        console.debug('Field Planner | iitcBuildDate = ' + iitcBuildDate);
+        if (iitcBuildDate <= '2023-11-20-071719') {
+            $('#toolbox').append('<a onclick="window.plugin.homogeneousFields.openDialog(); return false;">Plan Fields</a>');
+        } else {
+            const buttonId = IITC.toolbox.addButton({
+                label: 'Plan Fields',
+                action: () => self.openDialog()
+            });
+        };
 
         // Add event listener for portal selection
         window.addHook('portalSelected', self.portalSelected);
@@ -539,7 +555,7 @@ function wrapper(plugin_info) {
     // function to generate the portal data structure
     self.generatePortalData = function(hcf) {
         let portalData = {};
-        console.log(hcf);
+        console.debug(hcf);
         populatePortalData(portalData, hcf, 0);
 
         // post-processing step to ensure reflexivity of links
@@ -1017,7 +1033,7 @@ function wrapper(plugin_info) {
             const totalPortalsActual = path.length;
             // Check if the total number of portals and keys match the expected values
             if (totalPortalsActual !== totalPortalsExpected || totalKeysActual !== totalKeysExpected) {
-                console.log(hcfLevel, totalPortalsActual, totalPortalsExpected, totalKeysActual, totalKeysExpected, path, plan);
+                console.debug('Field Planner | ' + hcfLevel, totalPortalsActual, totalPortalsExpected, totalKeysActual, totalKeysExpected, path, plan);
                 // return 'Something went wrong. Wait for all portals to load, and try again.';
                 return null;
             }
@@ -1414,7 +1430,7 @@ function wrapper(plugin_info) {
 
         // color picker event:
         $("#hcf-colorPicker").change(function() {
-            console.log('HCF Selected color:', this.value); // Output the selected color
+            console.debug('Field Planner | Selected color:', this.value); // Output the selected color
             self.linkStyle.color = this.value;
             self.fieldStyle.fillColor = this.value;
             self.updateLayer();
@@ -1580,7 +1596,7 @@ function wrapper(plugin_info) {
 
     // PLUGIN END
     self.pluginLoadedTimeStamp = performance.now();
-    console.log('hcf plugin is ready')
+    console.log('Field Planner | plugin is ready')
 
 
     // Add an info property for IITC's plugin system
