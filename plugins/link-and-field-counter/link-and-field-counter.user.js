@@ -7,7 +7,7 @@
 // @category       Layer
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/link-and-field-counter/link-and-field-counter.meta.js
-// @downloadURL    https://github.com/mike40033/iitc-57Cell/raw/master/plugins/link-and-field-counter-counter/link-and-field-counter.user.js
+// @downloadURL    https://github.com/mike40033/iitc-57Cell/raw/master/plugins/link-and-field-counter/link-and-field-counter.user.js
 // @include        https://intel.ingress.com/*
 // @include        http://intel.ingress.com/*
 // @match          https://intel.ingress.com/*
