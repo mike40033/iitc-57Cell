@@ -238,7 +238,7 @@ function wrapper(plugin_info) {
 
         container.dialog({
             autoOpen: false,
-            title: 'Agent Link Counter',
+            title: 'Link and Field Counter',
             width: 300,
             position: { my: "left top", at: "left+20 top+20", of: "#map" }
         });
@@ -248,7 +248,7 @@ function wrapper(plugin_info) {
             .appendTo(container);
 
         var link = $('<a>')
-            .html('Agent Link Counter')
+            .html('Link And Field Counter')
             .click(function() {
                 container.dialog('open');
             });
