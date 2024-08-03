@@ -175,12 +175,12 @@ function wrapper(plugin_info) {
         <td><b>${totals['Resistance'][1]}</b></td>
         <td><b>${totals['Resistance'][2]}</b></td>
         </tr>`;
-        if (totals['Unknown'] > 0) content += `<tr></tr><tr style="color: #ffFFFF"><td><b>Unknown</b></td>
+        if (totals['Unknown']) content += `<tr></tr><tr style="color: #ffFFFF"><td><b>Unknown</b></td>
         <td><b>${totals['Unknown'][0]}</b></td>
         <td><b>${totals['Unknown'][1]}</b></td>
         <td><b>${totals['Unknown'][2]}</b></td>
         </tr>`;
-        if (totals['Machina'] > 0) content += `<tr></tr><tr style="color: #ff3300"><td><b>Machina</b></td>
+        if (totals['Machina']) content += `<tr></tr><tr style="color: #ff3300"><td><b>Machina</b></td>
         <td><b>${totals['Machina'][0]}</b></td>
         <td><b>${totals['Machina'][1]}</b></td>
         <td><b>${totals['Machina'][2]}</b></td>
