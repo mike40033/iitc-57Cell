@@ -29,7 +29,7 @@ changeLog = [
     {
         version: '2.1.9.20250810',
         changes: [
-            'FIX: Reflect changes in how portal details are accessed (Heistergand)',
+            'FIX: Reflect changes in how portal details are accessed (57Cell)',
         ],
     },
     {
