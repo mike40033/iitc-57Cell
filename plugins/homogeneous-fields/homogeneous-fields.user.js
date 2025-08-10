@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id             iitc-plugin-homogeneous-fields@57Cell
 // @name           IITC Plugin: 57Cell's Field Planner
-// @version        2.1.8.20240202
+// @version        2.1.9.20250810
 // @description    Plugin for planning fields in IITC
 // @author         57Cell (Michael Hartley) and ChatGPT 4.0
 // @category       Layer
@@ -24,8 +24,14 @@
 // ==/UserScript==
 
 pluginName = "57Cell's Field Planner";
-version = "2.1.8";
+version = "2.1.9";
 changeLog = [
+    {
+        version: '2.1.9.20250810',
+        changes: [
+            'FIX: Reflect changes in how portal details are accessed (Heistergand)',
+        ],
+    },
     {
         version: '2.1.8.20240202',
         changes: [
@@ -1512,7 +1518,7 @@ function wrapper(plugin_info) {
 
 
         // Ignore if already selected
-        let portalDetails = window.portalDetail.get(data.selectedPortalGuid);
+        let portalDetails = window.portals[data.selectedPortalGuid]._details;
         if (portalDetails === undefined) return;
         if (self.selectedPortals.some(({guid}) => guid === data.selectedPortalGuid)) return;
 
