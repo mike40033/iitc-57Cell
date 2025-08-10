@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id             iitc-plugin-homogeneous-fields@57Cell
 // @name           IITC Plugin: 57Cell's Field Planner
-// @version        2.1.8.20240202
+// @version        2.1.9.20250810
 // @description    Plugin for planning fields in IITC
 // @author         57Cell (Michael Hartley) and ChatGPT 4.0
 // @category       Layer
