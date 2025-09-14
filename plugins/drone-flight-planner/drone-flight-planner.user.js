@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id             iitc-plugin-drone-planner@57Cell
 // @name           IITC Plugin: 57Cell's Drone Flight Planner
-// @version        1.0.0.20250817
+// @version        1.0.1.20250909
 // @description    Plugin for planning drone flights in IITC
 // @author         57Cell (Michael Hartley) and ChatGPT 4.0
 // @category       Layer
@@ -24,8 +24,14 @@
 // ==/UserScript==
 
 pluginName = "57Cell's Drone Planner";
-version = "1.0.0";
+version = "1.0.1";
 changeLog = [
+    {
+        version: '1.0.1.20250909',
+        changes: [
+            'NEW: Allow users to disallow the key trick',
+        ],
+    },
     {
         version: '1.0.0.20250816',
         changes: [
@@ -74,7 +80,6 @@ function wrapper(plugin_info) {
 
     self.scanPortalsAndUpdateGraph = function() {
         let graph = self.graph;
-        const MAX_DISTANCE = 1250; // Reuse this constant if it's globally defined
         var bounds = map.getBounds(); // Current map view bounds
 
         for (let key in window.portals) {
@@ -90,7 +95,7 @@ function wrapper(plugin_info) {
                 for (let otherKey in self.allPortals) {
                     if (key !== otherKey) {
                         let distance = self.getDistance(key, otherKey);
-                        if (distance <= MAX_DISTANCE) {
+                        if (distance <= self.getHardMaxDistance()) {
                             // Add bidirectional edges for close portals
                             graph[key].push(otherKey);
                             if (!graph[otherKey].includes(key)) { // Prevent duplicate entries
@@ -181,10 +186,13 @@ function wrapper(plugin_info) {
             if (graph[current]) {
                 graph[current].forEach(neighbor => {
                     if (!visited.has(neighbor)) {
-                        visited.add(neighbor);
-                        previousNodes[neighbor] = current;
                         let distance = self.getDistance(current, neighbor);
                         let isShortHop = distance <= longHopThreshold;
+                        if (!isShortHop && !self.areLongHopsAllowed()) {
+                            return;
+                        }
+                        visited.add(neighbor);
+                        previousNodes[neighbor] = current;
                         if (isShortHop) {
                             queue.unshift(neighbor);
                         } else {
@@ -218,9 +226,9 @@ function wrapper(plugin_info) {
         let shortHopCost = self.getCostFromHops(0,Math.ceil(distMetres / longHopThreshold))
 
         // Calculate the maximum number of long and short hops
-        let numLongHops = Math.floor(distMetres / 1250); // 1.25km max hop length
+        let numLongHops = Math.floor(distMetres / self.getHardMaxDistance()); // 1.25km max hop length
         let numShortHops = 0;
-        if (distMetres - 1250*numLongHops > longHopThreshold) {
+        if (distMetres - self.getHardMaxDistance()*numLongHops > longHopThreshold) {
             numLongHops++;
         } else {
             numShortHops++;
@@ -256,6 +264,9 @@ function wrapper(plugin_info) {
             graph[current].forEach(neighbor => {
                 let distance = self.getDistance(current, neighbor);
                 let isLongHop = distance > longHopThreshold;
+                if (isLongHop && !self.areLongHopsAllowed()) {
+                    return;
+                }
                 let cost = isLongHop ? self.getCostFromHops(1, 0) : self.getCostFromHops(0, 1);
                 let tentative_gScore = gScore[current] + cost;
                 if (!gScore.hasOwnProperty(neighbor) || tentative_gScore < gScore[neighbor]) {
@@ -314,6 +325,20 @@ function wrapper(plugin_info) {
         let rtn = shortHops + (longHops * penalty);
         return rtn;
     };
+
+    self.areLongHopsAllowed = function() {
+        let longHopsAllowedString = document.querySelector('input[name="allow-long-hops"]:checked').value;
+        let longHopsAllowed = longHopsAllowedString == "yes-long-hops" ? true : false;
+        return longHopsAllowed;
+    }
+
+    self.getHardMaxDistance = function() {
+//        let longHopsAllowedString = document.querySelector('input[name="allow-long-hops"]:checked').value;
+//        let longHopsAllowed = longHopsAllowedString == "yes-long-hops" ? true : false;
+//        if (longHopsAllowed) return 1250;
+//        return self.getLongHopThreshold();
+          return 1250;
+    }
 
     self.constructTree = function(previousNodes, hops = {}) {
         let tree = {};
@@ -603,17 +628,10 @@ function wrapper(plugin_info) {
     '   <div style="display: flex;justify-content: space-between;align-items: center;">\n' +
     '      <span>This is '+pluginName+' version '+version+'. Follow the links below if you would like to:\n' +
     '        <ul>\n'+
-    '           <li>Info coming soon!</li>\n' +
-//    '          <li style="visibility:hidden;"> <a href="https://www.youtube.com/watch?v=LGCOUXZDEjU" target="_blank">Learn how to use this plugin</a></li>\n'+
-//    '          <li> <a href="https://www.youtube.com/playlist?list=PLQ2GCHa7ljyP9pl0fmz5Z8U8Rx3_VZMVl" target="_blank"">Watch some videos on Homogeneous Fields</a></li>\n'+
-//    '          <li> <a href="https://youtu.be/yvvrHEtkxGc" target="_blank">Learn about the Cobweb fielding plan</a></li>\n'+
-//    '          <li> <a href="https://www.youtube.com/playlist?list=PLQ2GCHa7ljyPucSuNPGagiBZVjFxkOMpC" target="_blank">See videos on maximising your fields</a></li>\n'+
-//    '          <li> <a href="https://github.com/Heistergand/fanfields2/raw/master/iitc_plugin_fanfields2.user.js" target="_blank">Get a plugin for Fanfields</a></li>\n'+
-//    '          <li> <a href="https://www.youtube.com/playlist?list=PLQ2GCHa7ljyMBxNRWm1rmH8_vp3GJvxzN" target="_blank">Find out more about Fanfields</a></li>\n'+
+    '          <li> <a href="https://youtu.be/5M1IrA_6EoY" target="_blank">Learn how to use this plugin</a></li>\n'+
     '        </ul>\n' +
     '      Contributing authors:\n' +
     '        <ul>\n'+
-//    '          <li> <a href="https://youtu.be/M1O2SehnPGw" target="_blank"">ChatGPT 4.0</a></li>\n'+
     '          <li> <a href="https://www.youtube.com/@57Cell" target="_blank">@57Cell</a></li>\n'+
     '        </ul>\n' +
     '      </span>\n' +
@@ -637,6 +655,12 @@ function wrapper(plugin_info) {
         '      <label for="path-balanced" title="A balance between minimising long hops or total number of hops">Balance Keys and Hops</label>\n' +
         '      <input type="radio" id="path-min-long-hops" name="path-type" value="min-long-hops" checked />\n' +
         '      <label for="path-min-long-hops" title="Avoid long hops if at all possible">Minimise Keys Needed</label><br/>\n' +
+        '      <br/>\n' +
+        '      <label for="allow-long-hops">Allow long hops? </label><br/>\n' +
+        '      <input type="radio" id="path-yes-long-hops" name="allow-long-hops" value="yes-long-hops" checked />\n' +
+        '      <label for="path-yes-long-hops" title="Key trick needed sometimes">Yes</label>\n' +
+        '      <input type="radio" id="path-no-long-hops" name="allow-long-hops" value="no-long-hops" />\n' +
+        '      <label for="path-no-long-hops" title="No key trick needed">No</label><br/>\n' +
         '      <br/>\n' +
         '      <label for="optimisation-type">Optimisation Type: </label><br/>\n' +
         '      <input type="radio" id="opt-none" name="optimisation-type" value="none" checked />\n' +
@@ -722,7 +746,7 @@ function wrapper(plugin_info) {
                 for (let portalGUID in self.allPortals) {
                     if (!newAllPortals[portalGUID]) {
                         let distance = self.getDistance(pathPortalGUID, portalGUID);
-                        if (distance <= 1250) { // 1.25km = 1250m
+                        if (distance <= self.getHardMaxDistance()) {
                             newAllPortals[portalGUID] = self.allPortals[portalGUID];
                         }
                     }
@@ -871,6 +895,12 @@ function wrapper(plugin_info) {
         $('input[name="path-type"]').change(function() {
             self.updatePlan();
         });
+
+        // Attach change event handlers to whether long hops are permitted
+        $('input[name="allow-long-hops"]').change(function() {
+            self.updatePlan();
+        });
+
 
         // Attach change event handlers to optimization type radio buttons
         $('input[name="optimisation-type"]').change(function() {
