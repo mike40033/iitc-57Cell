@@ -1,9 +1,9 @@
 // ==UserScript==
 // @id             iitc-plugin-drone-planner@57Cell
 // @name           IITC Plugin: 57Cell's Drone Flight Planner
-// @version        1.0.1.20250909
+// @version        1.0.2.20251130
 // @description    Plugin for planning drone flights in IITC
-// @author         57Cell (Michael Hartley) and ChatGPT 4.0
+// @author         57Cell (Michael Hartley) and ChatGPT 4.0, updates by kyke31 (Enrique H.) with Gemini
 // @category       Layer
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/drone-flight-planner/drone-flight-planner.meta.js
@@ -24,18 +24,22 @@
 // ==/UserScript==
 
 pluginName = "57Cell's Drone Planner";
-version = "1.0.1";
+version = "1.0.2";
 changeLog = [
+    {
+        version: '1.0.2.20251130',
+        changes: [
+            'MAJOR: Complete UI overhaul (compact 2-col, interactive list)',
+            'PERF: Spatial Hashing for O(N) graph building',
+            'NEW: "Max Unique" mode (for Unique Drone Visited stat)',
+            'NEW: Copy flight plan to clipboard, cardinal directions, faction colors',
+            'UX: Start point selection flow, blocked nodes rerouting',
+        ],
+    },
     {
         version: '1.0.1.20250909',
         changes: [
             'NEW: Allow users to disallow the key trick',
-        ],
-    },
-    {
-        version: '1.0.0.20250816',
-        changes: [
-            'NEW: Initial Public Release',
         ],
     },
 ];
@@ -43,127 +47,264 @@ changeLog = [
 function wrapper(plugin_info) {
     if (typeof window.plugin !== 'function') window.plugin = function() {};
     plugin_info.buildName = '';
-    plugin_info.dateTimeVersion = '2025-08-16-151500';
+    plugin_info.dateTimeVersion = '2025-11-30-120000';
     plugin_info.pluginId = '57CellsDronePlanner';
 
     // PLUGIN START
-    console.log('loading drone plugin')
+    console.log('DronePlanner: Loading plugin...');
     var changelog = changeLog;
     let self = window.plugin.dronePlanner = function() {};
 
-    // helper function to convert portal ID to portal object
-    function portalIdToObject(portalId) {
-        let portals = self.allPortals; // IITC global object that contains all portal data
-        let portal = portals[portalId] ? portals[portalId].options.data : null;
-
-        // Convert portal to the structure expected by populatePortalData
-        if (portal) {
-            let lat = parseFloat(portal.latE6 / 1e6);
-            let lng = parseFloat(portal.lngE6 / 1e6);
-            return {
-                id: portalId, // ID of the portal
-                name: portal.title, // title of the portal
-                latLng: new L.latLng(lat,lng), // use LatLng Class to stay more flexible
-            };
+    // --- CSS STYLES ---
+    const styles = `
+        .drone-plan-list {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+            font-family: monospace;
         }
+        .drone-plan-step {
+            display: grid;
+            grid-template-columns: 25px 30px 35px 1fr 50px 35px; /* # Dir Fac Name Dist Alt */
+            align-items: center;
+            padding: 2px 4px;
+            border-bottom: 1px solid #eee;
+            font-size: 11px;
+            color: #333;
+            gap: 5px;
+        }
+        .drone-plan-step:hover {
+            background-color: #e0f7fa;
+        }
+        .drone-step-info {
+            cursor: pointer;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-weight: bold;
+        }
+        .drone-step-dir { color: #007bb5; font-weight: bold; }
+        
+        .drone-fact { font-weight: bold; font-size: 10px; }
+        .fact-enl { color: #008800; }
+        .fact-res { color: #0000aa; }
+        .fact-mac { color: #aa0000; }
+        .fact-neu { color: #666666; }
 
-        return null;
-    }
+        .drone-step-alt {
+            cursor: pointer;
+            padding: 1px 4px;
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            font-size: 9px;
+            color: #d32f2f;
+            text-align: center;
+        }
+        .drone-step-alt:hover {
+            background: #d32f2f;
+            color: white;
+        }
+        .drone-plan-step.long-hop { border-left: 3px solid #ff0000; }
+        .drone-plan-step.short-hop { border-left: 3px solid #cc44ff; }
+        
+        /* Compact Button Layout */
+        .hcf-row-container {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+        .hcf-row-label {
+            width: 50px;
+            font-size: 10px;
+            font-weight: bold;
+            color: #666;
+            text-align: right;
+            padding-right: 8px;
+        }
+        .hcf-btn-group {
+            display: flex;
+            flex: 1;
+            gap: 2px;
+        }
+        .hcf-btn-group button {
+            flex: 1;
+            padding: 2px 5px;
+            font-size: 10px;
+            cursor: pointer;
+        }
+        .hcf-loading {
+            padding: 10px;
+            color: #000;
+            background: #ffffaa;
+            text-align: center;
+            font-weight: bold;
+            font-size: 11px;
+        }
+        .hcf-plan-header {
+            font-size: 11px;
+            font-weight: bold;
+            padding: 4px;
+            background: #f4f4f4;
+            border-bottom: 1px solid #ccc;
+            color: #333;
+        }
+    `;
 
-    // layerGroup for the draws
+    // --- STATE VARIABLES ---
     self.linksLayerGroup = null;
     self.fieldsLayerGroup = null;
     self.highlightLayergroup = null;
 
     self.allPortals = {};
     self.graph = {};
+    self.userBlockedNodes = new Set();
 
+    // --- GRAPH BUILDING ---
     self.scanPortalsAndUpdateGraph = function() {
-        let graph = self.graph;
-        var bounds = map.getBounds(); // Current map view bounds
+        console.log("DronePlanner: Starting scan...");
+        $("#hcf-plan-list-container").html("<div class='hcf-loading'>Scanning...</div>");
+        setTimeout(() => { self.performScan(); }, 50);
+    }
 
+    self.performScan = function() {
+        console.time("DronePlanner: GraphBuild");
+        self.userBlockedNodes.clear();
+        let graph = self.graph = {};
+        let bounds = map.getBounds();
+        let newPortals = {};
+        let edgeCount = 0;
+        
+        // Filter visible portals
         for (let key in window.portals) {
-            var portal = window.portals[key]; // Retrieve the portal object
-            var portalLatLng = portal.getLatLng(); // Portal's latitude and longitude
-            if (!self.allPortals.hasOwnProperty(key) && bounds.contains(portalLatLng)) {
-                self.allPortals[key] = portal; // Add new portal
-
-                // Initialize graph entry for the new portal
+            let portal = window.portals[key];
+            if (bounds.contains(portal.getLatLng())) {
+                newPortals[key] = portal;
                 graph[key] = [];
+            }
+        }
+        self.allPortals = newPortals;
+        console.log(`DronePlanner: Found ${Object.keys(newPortals).length} visible portals.`);
 
-                // Check distance to all other portals in self.allPortals
-                for (let otherKey in self.allPortals) {
-                    if (key !== otherKey) {
-                        let distance = self.getDistance(key, otherKey);
-                        if (distance <= self.getHardMaxDistance()) {
-                            // Add bidirectional edges for close portals
-                            graph[key].push(otherKey);
-                            if (!graph[otherKey].includes(key)) { // Prevent duplicate entries
-                                graph[otherKey].push(key);
+        // Spatial Hashing (Bucketing) to optimize graph build
+        let BUCKET_SIZE = 0.02; 
+        let buckets = {};
+        function getBucketId(lat, lng) {
+            return Math.floor(lat / BUCKET_SIZE) + "_" + Math.floor(lng / BUCKET_SIZE);
+        }
+
+        for (let key in newPortals) {
+            let ll = newPortals[key].getLatLng();
+            let bid = getBucketId(ll.lat, ll.lng);
+            if (!buckets[bid]) buckets[bid] = [];
+            buckets[bid].push(key);
+        }
+
+        let maxDist = self.getHardMaxDistance();
+        
+        // Build Edges
+        for (let key in newPortals) {
+            let ll = newPortals[key].getLatLng();
+            let bx = Math.floor(ll.lat / BUCKET_SIZE);
+            let by = Math.floor(ll.lng / BUCKET_SIZE);
+
+            for (let x = bx - 1; x <= bx + 1; x++) {
+                for (let y = by - 1; y <= by + 1; y++) {
+                    let neighborBid = `${x}_${y}`;
+                    if (buckets[neighborBid]) {
+                        buckets[neighborBid].forEach(otherKey => {
+                            if (key < otherKey) { 
+                                let distance = self.getDistance(key, otherKey);
+                                if (distance <= maxDist) {
+                                    graph[key].push(otherKey);
+                                    graph[otherKey].push(key);
+                                    edgeCount++;
+                                }
                             }
-                        }
+                        });
                     }
                 }
             }
         }
+        console.log(`DronePlanner: Built graph with ${edgeCount} connections.`);
+        console.timeEnd("DronePlanner: GraphBuild");
         self.updatePlan();
     }
 
-    // TODO: make linkStyle editable in options dialog
-    self.linkStyle = {
-        color: '#FF0000',
-        opacity: 1,
-        weight: 1.5,
-        clickable: false,
-        interactive: false,
-        smoothFactor: 10,
-        dashArray: [12, 5, 4, 5, 6, 5, 8, 5, "100000" ],
-    };
-
-    // TODO: make fieldStyle editable in options dialog
-    self.fieldStyle = {
-        stroke: false,
-        fill: true,
-        fillColor: '#FF0000',
-        fillOpacity: 0.1,
-        clickable: false,
-        interactive: false,
-    };
+    // --- PATHFINDING LOGIC ---
+    self.delayedUpdatePlan = function() {
+        $("#hcf-plan-list-container").html("<div class='hcf-loading'>Calculating...</div>");
+        setTimeout(() => { self.updatePlan(); }, 50);
+    }
 
     self.updatePlan = function() {
-        $("#hcf-plan-text").val("Please wait...");
-
         if (!self.startPortal) {
-            $("#hcf-plan-text").val("Please click on a start portal...");
+            console.log("DronePlanner: No start portal selected.");
+            $("#hcf-plan-list-container").html("<div style='padding:5px; color:#333; font-size:11px;'>1. Click 'Scan Area'<br>2. Click 'Start (Set)'<br>3. Click a portal on map</div>");
             return;
         }
         let graph = self.graph;
-        console.time("A* Time");
-        self.plan = self.findMinimumCostPath(graph);
-        console.timeEnd("A* Time");
 
-        console.time("update Layer Time");
+        if (document.getElementById('opt-max-unique').checked) {
+             console.time("DronePlanner: UniquePathCalc");
+             let uniquePath = self.findMaxUniquePath(graph, self.startPortal.guid);
+             self.plan = { furthestPath: uniquePath, tree: {} };
+             console.timeEnd("DronePlanner: UniquePathCalc");
+        } else {
+            console.time("DronePlanner: A*Calc");
+            self.plan = self.findMinimumCostPath(graph);
+            console.timeEnd("DronePlanner: A*Calc");
+        }
         self.updateLayer();
-        console.timeEnd("update Layer Time");
+    }
+
+    self.findMaxUniquePath = function(graph, startNode) {
+        let path = [startNode];
+        let visited = new Set([startNode]);
+        let current = startNode;
+        let longHopThreshold = self.getLongHopThreshold();
+        let maxSteps = 200; 
+
+        for (let i = 0; i < maxSteps; i++) {
+            if (!graph[current]) break;
+            let neighbors = graph[current].filter(n => !visited.has(n) && !self.userBlockedNodes.has(n));
+            if (neighbors.length === 0) break;
+
+            neighbors.sort((a, b) => {
+                let distA = self.getDistance(current, a);
+                let distB = self.getDistance(current, b);
+                let isShortA = distA <= longHopThreshold;
+                let isShortB = distB <= longHopThreshold;
+                if (isShortA && !isShortB) return -1;
+                if (!isShortA && isShortB) return 1;
+                
+                let countA = (graph[a] || []).filter(n => !visited.has(n) && !self.userBlockedNodes.has(n)).length;
+                let countB = (graph[b] || []).filter(n => !visited.has(n) && !self.userBlockedNodes.has(n)).length;
+                return countB - countA;
+            });
+
+            let nextNode = neighbors[0];
+            let dist = self.getDistance(current, nextNode);
+            if (dist > longHopThreshold && !self.areLongHopsAllowed()) {
+                 let validNode = neighbors.find(n => self.getDistance(current, n) <= longHopThreshold);
+                 if (validNode) nextNode = validNode;
+                 else break;
+            }
+            visited.add(nextNode);
+            path.push(nextNode);
+            current = nextNode;
+        }
+        console.log(`DronePlanner: Max unique path found with ${path.length} steps.`);
+        return path;
     }
 
     self.findMinimumCostPath = function(graph) {
-        console.time("spanning tree Time");
+        console.time("DronePlanner: SpanningTree");
         let pnfp = self.createSpanningTreeAndFindFurthestPortal(graph);
-        let previousNodes = pnfp.pn;
-        let furthestPortal = pnfp.fp;
-        console.timeEnd("spanning tree Time");
-        console.time("construct tree Time");
-        let tree = self.constructTree(previousNodes);
-        console.timeEnd("construct tree Time");
-        console.time("furthest path Time");
-        if (document.getElementById('opt-none').checked) {
-            tree.furthestPath = self.reconstructPath(previousNodes, furthestPortal);
-        } else {
-            tree.furthestPath = self.applyAStar(graph, self.startPortal.guid, furthestPortal, self.heuristic);
-        }
-        console.timeEnd("furthest path Time");
-
+        console.timeEnd("DronePlanner: SpanningTree");
+        
+        let tree = self.constructTree(pnfp.pn);
+        tree.furthestPath = self.applyAStar(graph, self.startPortal.guid, pnfp.fp, self.heuristic);
         return tree;
     };
 
@@ -182,107 +323,70 @@ function wrapper(plugin_info) {
                 maxDistance = currentDistance;
                 furthestPortal = current;
             }
-
             if (graph[current]) {
                 graph[current].forEach(neighbor => {
-                    if (!visited.has(neighbor)) {
+                    if (!visited.has(neighbor) && !self.userBlockedNodes.has(neighbor)) {
                         let distance = self.getDistance(current, neighbor);
                         let isShortHop = distance <= longHopThreshold;
-                        if (!isShortHop && !self.areLongHopsAllowed()) {
-                            return;
-                        }
+                        if (!isShortHop && !self.areLongHopsAllowed()) return;
                         visited.add(neighbor);
                         previousNodes[neighbor] = current;
-                        if (isShortHop) {
-                            queue.unshift(neighbor);
-                        } else {
-                            queue.push(neighbor);
-                        }
+                        if (isShortHop) queue.unshift(neighbor);
+                        else queue.push(neighbor);
                     }
                 });
             }
         }
-        let rtn = {pn: previousNodes, fp:furthestPortal};
-        return rtn;
+        return {pn: previousNodes, fp:furthestPortal};
     };
-
-    self.getOptimisationScale = function() {
-        if (document.getElementById('opt-perfect') && document.getElementById('opt-perfect').checked) {
-            return 1;
-        } else if (document.getElementById('opt-balanced').checked) {
-            return 3;
-        } else if (document.getElementById('opt-greedy').checked) {
-            return 10;
-        } else {
-            // 'None' or no option selected, default or undefined behavior
-            return undefined; // Or any other default value you'd prefer
-        }
-    }
 
     self.heuristic = function (node, goal) {
         let distMetres = self.getDistance(node, goal);
         let longHopThreshold = self.getLongHopThreshold();
-        // Calculate the total cost assuming only short hops
-        let shortHopCost = self.getCostFromHops(0,Math.ceil(distMetres / longHopThreshold))
-
-        // Calculate the maximum number of long and short hops
-        let numLongHops = Math.floor(distMetres / self.getHardMaxDistance()); // 1.25km max hop length
+        let shortHopCost = Math.ceil(distMetres / longHopThreshold);
+        let numLongHops = Math.floor(distMetres / self.getHardMaxDistance());
         let numShortHops = 0;
-        if (distMetres - self.getHardMaxDistance()*numLongHops > longHopThreshold) {
-            numLongHops++;
-        } else {
-            numShortHops++;
-        }
-        // Calculate the total cost assuming all (or mostly) long hops
-        let longHopCost = self.getCostFromHops(numLongHops,numShortHops);
-
-        let scale = self.getOptimisationScale();
-
-
-        // Return the minimum of the two costs
-        return Math.min(longHopCost, shortHopCost) * scale;
+        if (distMetres - self.getHardMaxDistance()*numLongHops > longHopThreshold) numLongHops++;
+        else numShortHops++;
+        
+        let longHopCost = Infinity;
+        if (self.areLongHopsAllowed()) longHopCost = self.getCostFromHops(numLongHops,numShortHops);
+        return Math.min(longHopCost, shortHopCost);
     }
 
     self.applyAStar = function(graph, start, end, heuristic) {
-        let openSet = [start]; // Open set as a list
+        let openSet = [start];
         let cameFrom = {};
         let gScore = { [start]: 0 };
-        let fScore = { [start]: heuristic(start, end) }; // Initialize fScore for start node
+        let fScore = { [start]: heuristic(start, end) };
         let longHopThreshold = self.getLongHopThreshold();
 
         while (openSet.length > 0) {
-            // Sort the open set based on fScore
             openSet.sort((a, b) => fScore[a] - fScore[b]);
             let current = openSet.shift();
-            if (current === end) {
-                console.time("reconstructPath");
-                let rtn = self.reconstructPath(cameFrom, current);
-                console.timeEnd("reconstructPath");
-                return rtn;
-            }
+            if (current === end) return self.reconstructPath(cameFrom, current);
 
-            graph[current].forEach(neighbor => {
-                let distance = self.getDistance(current, neighbor);
-                let isLongHop = distance > longHopThreshold;
-                if (isLongHop && !self.areLongHopsAllowed()) {
-                    return;
-                }
-                let cost = isLongHop ? self.getCostFromHops(1, 0) : self.getCostFromHops(0, 1);
-                let tentative_gScore = gScore[current] + cost;
-                if (!gScore.hasOwnProperty(neighbor) || tentative_gScore < gScore[neighbor]) {
-                    cameFrom[neighbor] = current;
-                    gScore[neighbor] = tentative_gScore;
-                    let tentative_fScore = gScore[neighbor] + heuristic(neighbor, end);
-                    if (!fScore.hasOwnProperty(neighbor)) {
-                        fScore[neighbor] = tentative_fScore;
-                        openSet.push(neighbor);
-                    } else if (tentative_fScore < fScore[neighbor]) {
-                        fScore[neighbor] = tentative_fScore;
+            if (graph[current]) {
+                graph[current].forEach(neighbor => {
+                    if (self.userBlockedNodes.has(neighbor)) return;
+                    let distance = self.getDistance(current, neighbor);
+                    let isLongHop = distance > longHopThreshold;
+                    if (isLongHop && !self.areLongHopsAllowed()) return;
+                    let cost = isLongHop ? self.getCostFromHops(1, 0) : self.getCostFromHops(0, 1);
+                    let tentative_gScore = gScore[current] + cost;
+                    if (!gScore.hasOwnProperty(neighbor) || tentative_gScore < gScore[neighbor]) {
+                        cameFrom[neighbor] = current;
+                        gScore[neighbor] = tentative_gScore;
+                        let tentative_fScore = gScore[neighbor] + heuristic(neighbor, end);
+                        if (!fScore.hasOwnProperty(neighbor)) {
+                            fScore[neighbor] = tentative_fScore;
+                            openSet.push(neighbor);
+                        } else if (tentative_fScore < fScore[neighbor]) fScore[neighbor] = tentative_fScore;
                     }
-                }
-            });
+                });
+            }
         }
-
+        console.warn("DronePlanner: A* failed to find a path.");
         return [];
     };
 
@@ -296,135 +400,169 @@ function wrapper(plugin_info) {
         return totalPath;
     };
 
+    // --- UTILITIES ---
+
     self.getLongHopThreshold = function() {
-        return parseInt(document.getElementById('long-hop-length').value);
+        let val = parseInt(document.getElementById('long-hop-length').value);
+        if (isNaN(val) || val < 0) return 500;
+        return val;
     }
 
     self.getCostFromHops = function(longHops, shortHops) {
-        const PENALTY_MIN_HOPS = 1.01;
-        const PENALTY_BALANCED = 3; // You can adjust this later as needed
-        const PENALTY_MIN_LONG_HOPS = 100;
-
         let pathType = document.querySelector('input[name="path-type"]:checked').value;
-        let penalty;
-
-        switch (pathType) {
-            case 'min-long-hops':
-                penalty = PENALTY_MIN_LONG_HOPS;
-                break;
-            case 'min-hops':
-                penalty = PENALTY_MIN_HOPS;
-                break;
-            case 'balanced':
-                penalty = PENALTY_BALANCED;
-                break;
-            default:
-                penalty = PENALTY_BALANCED; // Default case, can be adjusted
-        }
-
-        let rtn = shortHops + (longHops * penalty);
-        return rtn;
+        let penalty = 3;
+        if (pathType === 'min-long-hops') penalty = 100;
+        if (pathType === 'min-hops') penalty = 1.01;
+        return shortHops + (longHops * penalty);
     };
 
     self.areLongHopsAllowed = function() {
-        let longHopsAllowedString = document.querySelector('input[name="allow-long-hops"]:checked').value;
-        let longHopsAllowed = longHopsAllowedString == "yes-long-hops" ? true : false;
-        return longHopsAllowed;
+        return document.querySelector('input[name="allow-long-hops"]:checked').value == "yes-long-hops";
     }
 
-    self.getHardMaxDistance = function() {
-//        let longHopsAllowedString = document.querySelector('input[name="allow-long-hops"]:checked').value;
-//        let longHopsAllowed = longHopsAllowedString == "yes-long-hops" ? true : false;
-//        if (longHopsAllowed) return 1250;
-//        return self.getLongHopThreshold();
-          return 1250;
-    }
+    self.getHardMaxDistance = function() { return 1250; }
 
-    self.constructTree = function(previousNodes, hops = {}) {
+    self.constructTree = function(previousNodes) {
         let tree = {};
         for (let key in previousNodes) {
-            tree[key] = {
-                parent: previousNodes[key],
-                longHops: hops[key] ? hops[key].long : 0,
-                shortHops: hops[key] ? hops[key].short : 0
-            };
+            tree[key] = { parent: previousNodes[key] };
         }
         return tree;
     };
 
-    self.exportPlanAsText = function() {
-        let totalHops = self.plan.furthestPath.length - 1; // Number of hops is one less than the number of portals
-        let longHops = 0;
-        let longHopThreshold = parseInt(document.getElementById('long-hop-length').value);
+    self.getCardinalDirection = function(guidFrom, guidTo) {
+        if (!guidFrom || !guidTo) return "";
+        let ll1 = self.getLatLng(guidFrom);
+        let ll2 = self.getLatLng(guidTo);
+        if (!ll1 || !ll2) return "";
+        
+        let y = Math.sin(ll2.lng * Math.PI / 180 - ll1.lng * Math.PI / 180) * Math.cos(ll2.lat * Math.PI / 180);
+        let x = Math.cos(ll1.lat * Math.PI / 180) * Math.sin(ll2.lat * Math.PI / 180) -
+                Math.sin(ll1.lat * Math.PI / 180) * Math.cos(ll2.lat * Math.PI / 180) * Math.cos(ll2.lng * Math.PI / 180 - ll1.lng * Math.PI / 180);
+        let bearing = Math.atan2(y, x) * 180 / Math.PI;
+        bearing = (bearing + 360) % 360;
 
-        let totalDistance = self.getDistance(self.plan.furthestPath[0], self.plan.furthestPath.slice(-1)[0]);
+        const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW', 'N'];
+        return directions[Math.round(bearing / 45)];
+    }
 
-        for (let i = 0; i < self.plan.furthestPath.length - 1; i++) {
-            let distance = self.getDistance(self.plan.furthestPath[i], self.plan.furthestPath[i+1]);
-            if (distance > longHopThreshold) {
-                longHops++;
-            }
+    self.getFactionCode = function(guid) {
+        let p = self.allPortals[guid];
+        if (!p || !p.options) return { code: "---", class: "fact-neu" };
+        let t = p.options.team; // 1=RES, 2=ENL, 3=MAC
+        if (t === 1) return { code: "RES", class: "fact-res" };
+        if (t === 2) return { code: "ENL", class: "fact-enl" };
+        if (t === 3 || t === 'M') return { code: "MAC", class: "fact-mac" };
+        return { code: "---", class: "fact-neu" };
+    }
+    
+    self.blockAndReroute = function(guid) {
+        console.log("DronePlanner: Blocking portal " + guid + " and rerouting.");
+        self.userBlockedNodes.add(guid);
+        self.delayedUpdatePlan();
+    }
+
+    self.copyPlanToClipboard = function() {
+        if (!self.plan || !self.plan.furthestPath) {
+            alert("No flight plan to copy.");
+            return;
         }
+        let text = "";
+        let longHopThreshold = self.getLongHopThreshold();
 
-        // Convert total distance to kilometers
-        totalDistance = totalDistance / 1000;
-
-        // Update the text with the calculated values
-        let message = totalDistance.toFixed(2) + " km path found, with " + totalHops + " hops total, and " + longHops + " long hops\n\n";
         for (let i = 0; i < self.plan.furthestPath.length; i++) {
-            let distance = i == 0 ? 0 : self.getDistance(self.plan.furthestPath[i], self.plan.furthestPath[i-1]);
-            let longHop = (distance > longHopThreshold);
-            let prefix = i == 0 ? "Place drone at " : "Move drone to ";
-            let portalName = self.getPortalNameFromGUID(self.plan.furthestPath[i]);
-            let line = i + ". " + prefix + portalName;
-            if (longHop) {
-                line += " (Long hop: might need a key)";
+            let guid = self.plan.furthestPath[i];
+            let name = self.getPortalNameFromGUID(guid);
+            let faction = self.getFactionCode(guid).code;
+            let dir = "";
+            let distance = 0;
+            
+            if (i > 0) {
+                let prevGuid = self.plan.furthestPath[i-1];
+                dir = self.getCardinalDirection(prevGuid, guid);
+                distance = self.getDistance(prevGuid, guid);
             }
-            line += " ";
-            let flightDistance = self.getDistance(self.plan.furthestPath[i], self.plan.furthestPath[0]) / 1000;
-            line += flightDistance.toFixed(2)+"km so far";
-            message += line + "\n";
+            
+            text += `${i}. [${dir}] [${faction}] ${name} (${Math.round(distance)}m)\n`;
         }
-        return message;
+
+        navigator.clipboard.writeText(text).then(function() {
+            alert("Flight plan copied to clipboard!");
+        }, function(err) {
+            console.error('Could not copy text: ', err);
+            alert("Failed to copy to clipboard.");
+        });
+    }
+
+    // --- UI RENDERING ---
+    self.renderPlanAsList = function() {
+        if (!self.plan || !self.plan.furthestPath) return "";
+        let longHopThreshold = self.getLongHopThreshold();
+        let html = '<ul class="drone-plan-list">';
+        
+        let totalDistance = self.getDistance(self.plan.furthestPath[0], self.plan.furthestPath.slice(-1)[0]) / 1000;
+        let hopCount = self.plan.furthestPath.length - 1;
+        
+        html += `<div class="hcf-plan-header">
+                   Total: ${totalDistance.toFixed(2)}km | ${hopCount} Hops
+                 </div>`;
+
+        for (let i = 0; i < self.plan.furthestPath.length; i++) {
+            let guid = self.plan.furthestPath[i];
+            let name = self.getPortalNameFromGUID(guid);
+            let factInfo = self.getFactionCode(guid);
+            
+            let distance = i == 0 ? 0 : self.getDistance(self.plan.furthestPath[i], self.plan.furthestPath[i-1]);
+            let isLong = distance > longHopThreshold;
+            let hopClass = isLong ? "long-hop" : "short-hop";
+            
+            let dir = i > 0 ? self.getCardinalDirection(self.plan.furthestPath[i-1], guid) : "-";
+            let altBtn = i > 0 ? `<div class="drone-step-alt" title="Reroute" data-guid="${guid}">&#9851;</div>` : '';
+            
+            html += `<li class="drone-plan-step ${hopClass}">
+                        <div style="text-align:right; font-weight:bold;">${i}.</div>
+                        <div class="drone-step-dir">${dir}</div>
+                        <div class="drone-fact ${factInfo.class}">${factInfo.code}</div>
+                        <div class="drone-step-info" data-guid="${guid}" title="${name}">${name}</div>
+                        <div style="text-align:right;">${Math.round(distance)}m</div>
+                        <div>${altBtn}</div>
+                     </li>`;
+        }
+        html += '</ul>';
+        return html;
+    }
+
+    self.panToPortal = function(guid) {
+        let latLng = self.getLatLng(guid);
+        if(latLng) window.map.panTo(latLng);
     }
 
     self.getPortalNameFromGUID = function(guid) {
         let portalData = self.allPortals[guid];
-
         if (portalData && portalData.options && portalData.options.data && portalData.options.data.title) {
-            // Return the portal's name if it's available
             return portalData.options.data.title;
-        } else {
-            // If the name isn't available, use the lat/lng as a fallback
-            let latLng = self.getLatLng(guid);
-            if (latLng) {
-                return "?? Portal at " + latLng.lat.toFixed(6) + ", " + latLng.lng.toFixed(6);
-            } else {
-                return "Unknown Portal";
-            }
         }
+        return "Unknown";
     };
 
     self.updateLayer = function() {
         if (self.plan && self.plan.furthestPath) {
-            let message = self.exportPlanAsText();
-            $("#hcf-plan-text").val(message);
+            let html = self.renderPlanAsList();
+            $("#hcf-plan-list-container").html(html);
             self.drawLayer();
         } else {
-            // Handle case where self.plan or self.plan.furthestPath is not available
-            $("#hcf-plan-text").val("No plan available.");
+            $("#hcf-plan-list-container").html("<div style='padding:5px; color:#333; font-size:11px;'>1. Click 'Scan Area'<br>2. Click 'Start (Set)'<br>3. Click a portal on map</div>");
         }
     };
 
     self.drawLayer = function() {
+        console.time("DronePlanner: DrawLayer");
         self.clearLayers();
-        // Retrieve color values from color picker widgets
         let shortHopColor = document.getElementById('short-hop-colorPicker').value;
         let longHopColor = document.getElementById('long-hop-colorPicker').value;
         let fullTreeColor = document.getElementById('full-tree-colorPicker').value;
-        let longHopThreshold = parseInt(document.getElementById('long-hop-length').value);
+        let longHopThreshold = self.getLongHopThreshold();
 
-        // Function to determine the style based on hop length
         function getStyle(distance, isTree) {
             return {
                 color: isTree ? fullTreeColor : distance > longHopThreshold ? longHopColor : shortHopColor,
@@ -432,92 +570,70 @@ function wrapper(plugin_info) {
                 weight: isTree ? 1.5 : 4.5,
                 clickable: false,
                 interactive: false,
-                smoothFactor: 10,
                 dashArray: [12, 5, 4, 5, 6, 5, 8, 5, "100000"],
             };
         }
 
-        // Draw links in the tree
+        // Draw Tree
         for (let guid in self.plan) {
-            if (self.plan[guid].parent) {
+            if (self.plan[guid] && self.plan[guid].parent) {
                 let startLatLng = self.getLatLng(guid);
                 let endLatLng = self.getLatLng(self.plan[guid].parent);
                 let distance = self.getDistance(guid, self.plan[guid].parent);
                 self.drawLine(self.linksLayerGroup, startLatLng, endLatLng, getStyle(distance, true));
             }
         }
-
-        // Draw links in the furthest distance path
+        // Draw Path
         for (let i = 0; i < self.plan.furthestPath.length - 1; i++) {
             let startLatLng = self.getLatLng(self.plan.furthestPath[i]);
             let endLatLng = self.getLatLng(self.plan.furthestPath[i + 1]);
             let distance = self.getDistance(self.plan.furthestPath[i], self.plan.furthestPath[i + 1]);
             self.drawLine(self.fieldsLayerGroup, startLatLng, endLatLng, getStyle(distance, false));
         }
+        console.timeEnd("DronePlanner: DrawLayer");
     };
 
+    self.resetAll = function() {
+        console.log("DronePlanner: Resetting state.");
+        self.clearLayers();
+        self.startPortal = null;
+        self.plan = null;
+        self.allPortals = {};
+        self.graph = {};
+        self.userBlockedNodes.clear();
+        $("#hcf-plan-list-container").html("<div style='padding:5px; color:#333; font-size:11px;'>1. Click 'Scan Area'<br>2. Click 'Start (Set)'<br>3. Click a portal on map</div>");
+    }
 
     self.setup = function() {
-        // Add button to toolbox
-        $('#toolbox').append('<a onclick="window.plugin.dronePlanner.openDialog(); return false;">Plan Drone Flight</a>');
+        $("<style>").prop("type", "text/css").html(styles).appendTo("head");
 
-        // Add event listener for portal selection
+        $('#toolbox').append('<a onclick="window.plugin.dronePlanner.openDialog(); return false;">Plan Drone Flight</a>');
         window.addHook('portalSelected', self.portalSelected);
 
         self.linksLayerGroup = new L.LayerGroup();
         window.addLayerGroup('All Drone Paths', self.linksLayerGroup, false);
 
-        // window.addLayerGroup('Homogeneous CF Links', self.linksLayerGroup, false);
-
         self.fieldsLayerGroup = new L.LayerGroup();
         window.addLayerGroup('Longest Drone Path', self.fieldsLayerGroup, false);
-        // debugger;
+        
         self.highlightLayergroup = new L.LayerGroup();
         window.addLayerGroup('Start Portal Highlights', self.highlightLayergroup, true);
 
         window.map.on('overlayadd overlayremove', function() {
-            setTimeout(function(){
-                self.updateLayer();
-            },1);
+            setTimeout(function(){ self.updateLayer(); },1);
         });
     };
 
     self.clearLayers = function() {
-        if (window.map.hasLayer(self.linksLayerGroup)) {
-            self.linksLayerGroup.clearLayers();
-        }
-        if (window.map.hasLayer(self.fieldsLayerGroup)) {
-            self.fieldsLayerGroup.clearLayers();
-        }
-        if (window.map.hasLayer(self.highlightLayergroup)) {
-            self.highlightLayergroup.clearLayers();
-        }
+        if (window.map.hasLayer(self.linksLayerGroup)) self.linksLayerGroup.clearLayers();
+        if (window.map.hasLayer(self.fieldsLayerGroup)) self.fieldsLayerGroup.clearLayers();
+        if (window.map.hasLayer(self.highlightLayergroup)) self.highlightLayergroup.clearLayers();
     }
 
     self.drawLine = function(layerGroup, alatlng, blatlng, style) {
-        //check if layer is active
-        if (!window.map.hasLayer(layerGroup)) {
-            return;
-        }
+        if (!window.map.hasLayer(layerGroup)) return;
         var poly = L.polyline([alatlng, blatlng], style);
         poly.addTo(layerGroup);
-    }
-
-    // function to draw a link to the plugin layer
-    self.drawLink = function (alatlng, blatlng, style) {
-        self.drawLine(self.linkLayerGroup, alatlng, blatlng, style);
-    }
-
-    // function to draw a field to the plugin layer
-    self.drawField = function (alatlng, blatlng, clatlng, style) {
-        //check if layer is active
-        if (!window.map.hasLayer(self.fieldsLayerGroup)) {
-            return;
-        }
-
-        var poly = L.polygon([alatlng, blatlng, clatlng], style);
-        poly.addTo(self.fieldsLayerGroup);
-
     }
 
     self.exportDrawtoolsLink = function(p1, p2) {
@@ -527,39 +643,14 @@ function wrapper(plugin_info) {
         let opts = {...window.plugin.drawTools.lineOptions};
         let shortHopColor = document.getElementById('short-hop-colorPicker').value;
         let longHopColor = document.getElementById('long-hop-colorPicker').value;
-        let longHopThreshold = parseInt(document.getElementById('long-hop-length').value);
-
+        let longHopThreshold = self.getLongHopThreshold();
         opts.color =distance > longHopThreshold ? longHopColor : shortHopColor;
-
         let layer = L.geodesicPolyline([alatlng, blatlng], opts);
         window.plugin.drawTools.drawnItems.addLayer(layer);
         window.plugin.drawTools.save();
-
     }
 
-    // function to draw the plan to the plugin layer
-    self.drawPlan = function(plan) {
-        // initialize plugin layer
-        self.clearLayers();
-
-        $.each(plan, function(index,planStep) {
-            if (planStep.action === 'link') {
-                let ll_from = planStep.fromPortal.latLng, ll_to = planStep.portal.latLng;
-                self.drawLink(ll_from, ll_to, self.linkStyle);
-            }
-            if (planStep.action === 'field') {
-                self.drawField(
-                    planStep.a.latLng,
-                    planStep.b.latLng,
-                    planStep.c.latLng,
-                    self.fieldStyle);
-            }
-        });
-    }
-
-    // function to export and draw the plan to the drawtools plugin layer
     self.exportToDrawtools = function(plan) {
-        // initialize plugin layer
         if (window.plugin.drawTools !== 'undefined') {
             for (var i=0; i<self.plan.furthestPath.length-1; i++) {
                 self.exportDrawtoolsLink(self.plan.furthestPath[i], self.plan.furthestPath[i+1]);
@@ -567,145 +658,92 @@ function wrapper(plugin_info) {
         }
     }
 
-    // function to add a link to the arc plugin
-    self.drawArc = function (p1, p2) {
-        if(typeof window.plugin.arcs != 'undefined') {
-            window.selectedPortal = p1.id;
-            window.plugin.arcs.draw();
-            window.selectedPortal = p2.id;
-            window.plugin.arcs.draw();
-        }
-    }
-
-
-    // function to export the plan to the arc plugin
-    self.drawArcPlan = function(plan) {
-        // initialize plugin layer
-        if(typeof window.plugin.arcs !== 'undefined') {
-            $.each(plan, function(index, planStep) {
-                if (planStep.action === 'link') {
-                    self.drawArc(planStep.fromPortal, planStep.portal);
-                }
-            });
-        }
-    }
-
-    self.buildDirection = function(compass1, compass2, angle) {
-        if (angle == 0) return compass1;
-        if (angle == 45) return compass1 + compass2;
-        if (angle > 45) return self.buildDirection(compass2, compass1, 90-angle);
-        return compass1 + ' ' + angle + '° ' + compass2;
-    }
-
-    self.formatBearing = function(bearing) {
-        var bearingFromNorth = false;
-        bearing = (bearing + 360) % 360;
-        if (bearingFromNorth)
-            return bearing.toString().padStart(3, '0') + "°";
-        if (bearing <= 90) return self.buildDirection('N', 'E', bearing);
-        else if (bearing <= 180) return self.buildDirection('S', 'E', 180-bearing);
-        else if (bearing <= 270) return self.buildDirection('S', 'W', bearing-180);
-        else return self.buildDirection('N', 'W', 360-bearing);
-    }
-
-    self.formatDistance = function(distanceMeters) {
-        const feetInAMeter = 3.28084;
-        const milesInAMeter = 0.000621371;
-        const kmInAMeter = 0.001;
-
-        if (distanceMeters < 1000) {
-            const distanceFeet = Math.round(distanceMeters * feetInAMeter);
-            return `${Math.round(distanceMeters)}m (${distanceFeet}ft)`;
-        } else {
-            const distanceKm = (distanceMeters * kmInAMeter).toFixed(2);
-            const distanceMiles = (distanceMeters * milesInAMeter).toFixed(2);
-            return `${distanceKm}km (${distanceMiles}mi)`;
-        }
-    }
-
-    self.info_dialog_html = '<div id="more-info-container" '+
-    '                    style="height: inherit; display: flex; flex-direction: column; align-items: stretch;">\n' +
-    '   <div style="display: flex;justify-content: space-between;align-items: center;">\n' +
-    '      <span>This is '+pluginName+' version '+version+'. Follow the links below if you would like to:\n' +
-    '        <ul>\n'+
-    '          <li> <a href="https://youtu.be/5M1IrA_6EoY" target="_blank">Learn how to use this plugin</a></li>\n'+
-    '        </ul>\n' +
-    '      Contributing authors:\n' +
-    '        <ul>\n'+
-    '          <li> <a href="https://www.youtube.com/@57Cell" target="_blank">@57Cell</a></li>\n'+
-    '        </ul>\n' +
-    '      </span>\n' +
+    self.info_dialog_html = '<div id="more-info-container" style="height: inherit; display: flex; flex-direction: column; align-items: stretch;">' +
+    '   <div style="display: flex;justify-content: space-between;align-items: center;">' +
+    '      <span>This is '+pluginName+' version '+version+'.</span>' +
     '</div></div>';
 
-    // ATTENTION! DO NOT EVER TOUCH THE STYLES WITHOUT INTENSE TESTING!
-    self.dialog_html = '<div id="hcf-plan-container" ' +
-        '                    style="height: inherit; display: flex; flex-direction: column; align-items: stretch;">\n' +
-        '   <div style="display: flex;justify-content: space-between;align-items: center;">' +
-        '      <span>Hello from your friendly drone flight planner!</span><br/>' +
-        '      <span>Short Hop Color: <input type="color" id="short-hop-colorPicker" value="#cc44ff"></span>' +
-        '      <span>Long Hop Color: <input type="color" id="long-hop-colorPicker" value="#ff0000"></span>' +
-        '      <span>Full Tree Color: <input type="color" id="full-tree-colorPicker" value="#ffcc44"></span>' +
+    // UPDATED COMPACT DIALOG HTML
+    self.dialog_html = '<div id="hcf-plan-container" style="height: inherit; display: flex; flex-direction: column; align-items: stretch; font-size:11px;">\n' +
+        '   <div style="display: flex;justify-content: space-between;align-items: center; margin-bottom:5px;">' +
+        '      <span>Plan setup:</span>' +
+        '      <span title="Color for safe jumps (under limit)">Short: <input type="color" id="short-hop-colorPicker" value="#cc44ff" style="height:15px; width:20px;"></span>' +
+        '      <span title="Color for long jumps (over limit, requires keys)">Long: <input type="color" id="long-hop-colorPicker" value="#ff0000" style="height:15px; width:20px;"></span>' +
+        '      <span title="Color for all reachable portals explored">Tree: <input type="color" id="full-tree-colorPicker" value="#ffcc44" style="height:15px; width:20px;"></span>' +
         '   </div>' +
-        '    <fieldset style="margin: 2px;">\n'+
+        '    <fieldset style="margin: 0 0 5px 0; padding: 2px;">\n'+
         '      <legend>Options</legend>\n'+
-        '      <label for="path-type">Path optimisation: </label><br/>\n' +
-        '      <input type="radio" id="path-min-hops" name="path-type" value="min-hops" />\n' +
-        '      <label for="path-min-hops" title="Minimise the number of hops at any cost">Minimise Hops</label>\n' +
-        '      <input type="radio" id="path-balanced" name="path-type" value="balanced" />\n' +
-        '      <label for="path-balanced" title="A balance between minimising long hops or total number of hops">Balance Keys and Hops</label>\n' +
-        '      <input type="radio" id="path-min-long-hops" name="path-type" value="min-long-hops" checked />\n' +
-        '      <label for="path-min-long-hops" title="Avoid long hops if at all possible">Minimise Keys Needed</label><br/>\n' +
-        '      <br/>\n' +
-        '      <label for="allow-long-hops">Allow long hops? </label><br/>\n' +
-        '      <input type="radio" id="path-yes-long-hops" name="allow-long-hops" value="yes-long-hops" checked />\n' +
-        '      <label for="path-yes-long-hops" title="Key trick needed sometimes">Yes</label>\n' +
-        '      <input type="radio" id="path-no-long-hops" name="allow-long-hops" value="no-long-hops" />\n' +
-        '      <label for="path-no-long-hops" title="No key trick needed">No</label><br/>\n' +
-        '      <br/>\n' +
-        '      <label for="optimisation-type">Optimisation Type: </label><br/>\n' +
-        '      <input type="radio" id="opt-none" name="optimisation-type" value="none" checked />\n' +
-        '      <label for="opt-none" title="No path optimisation. Recommended when you\'re still exploring which portals can be reached">None (fastest)</label>\n' +
-        '      <input type="radio" id="opt-greedy" name="optimisation-type" value="greedy" />\n' +
-        '      <label for="opt-greedy" title="Aims straight for the target portal. Might add more long links than it should.">Greedy</label>\n' +
-        '      <input type="radio" id="opt-balanced" name="optimisation-type" value="balanced" />\n' +
-        '      <label for="opt-balanced" title="Tries to quickly find a good path, but won\'t 100% always find the absolute best">Almost Perfect</label>\n' +
-//        '      <input type="radio" id="opt-perfect" name="optimisation-type" value="perfect" />\n' +
-//        '      <label for="opt-perfect" title="Slow and thorough, is guaranteed to find a path with minimum cost - if you\'re patient!">Perfect (slowest)</label>\n' +
-        '      <div id="long-hop-length-container">\n' +
-        '        <label for="long-hop-length">Long Hop Length: </label>\n' +
-        '        <input type="number" id="long-hop-length" min="450" max="750" value="550" step="10">\n' +
-        '      </div>\n' +
+        '      <div style="display: flex; flex-wrap: wrap;">\n' +
+        // Column 1
+        '        <div style="width: 50%; box-sizing: border-box; padding-right: 5px;">\n' +
+        '          <input type="radio" id="path-min-hops" name="path-type" value="min-hops" title="Find path with fewest moves" /><label for="path-min-hops" title="Find path with fewest moves">Min Hops</label><br/>\n' +
+        '          <input type="radio" id="path-balanced" name="path-type" value="balanced" title="Balance between distance and key usage" /><label for="path-balanced" title="Balance between distance and key usage">Balanced</label><br/>\n' +
+        '          <input type="radio" id="path-min-long-hops" name="path-type" value="min-long-hops" checked title="Avoid long hops requiring keys" /><label for="path-min-long-hops" title="Avoid long hops requiring keys">Min Keys</label>\n' +
+        '          <hr style="border: 0; border-top: 1px solid #ccc; margin: 2px 0;">\n' + 
+        '          <strong title="Enable/Disable hops over 500m (requires keys)">Long Hops: </strong>\n' +
+        '          <input type="radio" id="path-yes-long-hops" name="allow-long-hops" value="yes-long-hops" title="Enable/Disable hops over 500m (requires keys)" /><label for="path-yes-long-hops">Yes</label>\n' +
+        '          <input type="radio" id="path-no-long-hops" name="allow-long-hops" value="no-long-hops" checked title="Enable/Disable hops over 500m (requires keys)" /><label for="path-no-long-hops">No</label>\n' +
+        '        </div>\n' +
+        // Column 2
+        '        <div style="width: 50%; box-sizing: border-box; padding-left: 5px; border-left: 1px solid #ccc;">\n' +
+        '          <strong title="Optimization Goal">Strategy:</strong><br/>\n' +
+        '          <input type="radio" id="opt-distance" name="optimisation-type" value="distance" checked title="Optimization Goal" /><label for="opt-distance">Max distance</label><br/>\n' +
+        '          <input type="radio" id="opt-max-unique" name="optimisation-type" value="max-unique" title="Optimization Goal" /><label for="opt-max-unique">Max unique portals</label>\n' +
+        '          <hr style="border: 0; border-top: 1px solid #ccc; margin: 2px 0;">\n' + 
+        '          <label for="long-hop-length">Short/long hop limit: </label>\n' +
+        '          <input type="number" id="long-hop-length" min="450" max="750" value="500" step="10" style="width: 45px;">meters\n' +
+        '        </div>\n' +
+        '      </div>\n' + 
         '    </fieldset>\n' +
-        '    <div id="hcf-buttons-container" style="margin: 3px;">\n' +
-        '      <button id="scan-portals" style="cursor: pointer" style=""margin: 2px;">Use Portals In View</button>'+
-        '      <button id="hcf-to-dt-btn" style="cursor: pointer">Export to DrawTools</button>'+
-        '      <button id="swap-ends-btn" style="cursor: pointer">Switch End to Start</button>'+
-        '      <button id="hcf-simulator-btn" style="cursor: pointer" hidden>Simulate</button>'+
-        '      <button id="hcf-clear-start-btn" style="cursor: pointer">Clear Start Portal</button>'+
-        '      <button id="hcf-clear-some-btn" style="cursor: pointer">Clear Unused Portals</button>'+
-        '      <button id="hcf-clear-most-btn" style="cursor: pointer">Clear Most Portals</button>'+
-        '      <button id="hcf-clear-btn" style="cursor: pointer">Clear All Portals</button>'+
-        '      <button id="more-info" style="cursor: pointer" style="margin: 2px;">More Info</button>'+
-        '    </div>\n' +
-        '    <textarea readonly id="hcf-plan-text" style="height:inherit;min-height:150px;width: auto;margin:2px;resize:none"></textarea>\n'+
+        
+        // Buttons
+        '    <div class="hcf-row-container">' +
+        '       <div class="hcf-row-label">Actions:</div>' +
+        '       <div class="hcf-btn-group">' +
+        '         <button id="scan-portals">Scan Area</button>'+
+        '         <button id="hcf-set-start-btn">Start (Set)</button>'+
+        '         <button id="hcf-clear-start-btn">Start (Clear)</button>'+
+        '       </div>' +
+        '    </div>' +
+        '    <div class="hcf-row-container">' +
+        '       <div class="hcf-row-label">Manage:</div>' +
+        '       <div class="hcf-btn-group">' +
+        '         <button id="hcf-clear-some-btn">Trim Unused</button>'+
+        '         <button id="hcf-reset-btn">Reset</button>'+
+        '         <button id="more-info">Info</button>'+
+        '       </div>' +
+        '    </div>' +
+        '    <div class="hcf-row-container">' +
+        '       <div class="hcf-row-label">Export:</div>' +
+        '       <div class="hcf-btn-group">' +
+        '         <button id="hcf-to-dt-btn">DrawTools</button>'+
+        '         <button id="hcf-copy-btn">Copy Steps</button>'+
+        '       </div>' +
+        '    </div>' +
+        
+        // List Container
+        '    <div id="hcf-plan-list-container" style="flex:1; width: auto; margin:2px; border:1px solid #ccc; overflow-y:auto; background:#fff;">' +
+        '       <div style="padding:10px; color:#333;">1. Click Scan<br>2. Click \'Start (Set)\'</div>' +
+        '    </div>\n'+
         '</div>\n';
 
-    // Attach click event to find-hcf-plan-button after the dialog is created
     self.openDialog = function() {
         if (!self.dialogIsOpen()) {
+            // Auto-reset state when opening for a fresh start
+            self.resetAll();
+
             dialog({
-                title: 'Drone Planning',
+                title: 'Plan Drone Flight',
                 id: 'hcf-plan-view',
                 html: self.dialog_html,
-                width: '40%',
-                minHeight: 460,
+                width: '640px',
+                minHeight: 380,
             });
             self.attachEventHandler();
             $('#dialog-hcf-plan-view').css("height", "370px");
         }
     };
 
-        // Attach click event to find-hcf-plan-button after the dialog is created
     self.open_info_dialog = function() {
         if (!self.infoDialogIsOpen()) {
             dialog({
@@ -720,238 +758,77 @@ function wrapper(plugin_info) {
         }
     };
 
-    self.switchEndToStart = function() {
-        if (!self.plan) return;
-        if (!self.plan.furthestPath) return;
-        self.startPortal = {guid: self.plan.furthestPath.slice(-1)[0]};
-        self.updatePlan();
-    }
-
-    self.clearPortalsOffTrack = function(keepNeighbours) {
-        var newAllPortals = {};
-        var newGraph = {};
-
-        // Convert furthestPath to a Set for efficient lookups
-        let furthestPathSet = new Set(self.plan.furthestPath);
-        // determine which portals should be retained
-        for (let portalGUID in self.allPortals) {
-            if (furthestPathSet.has(portalGUID)) {
-                newAllPortals[portalGUID] = self.allPortals[portalGUID];
-            }
+    self.showResetConfirmationDialog = function() {
+        if(confirm("Reset everything?")) {
+            self.resetAll();
+            $("#hcf-plan-list-container").html("<div style='padding:5px; color:#333;'>Reset complete.</div>");
         }
-
-        // if keepNeighbours is true, also keep portals within 1.25km of furthestPath portals
-        if (keepNeighbours) {
-            for (let pathPortalGUID of furthestPathSet) {
-                for (let portalGUID in self.allPortals) {
-                    if (!newAllPortals[portalGUID]) {
-                        let distance = self.getDistance(pathPortalGUID, portalGUID);
-                        if (distance <= self.getHardMaxDistance()) {
-                            newAllPortals[portalGUID] = self.allPortals[portalGUID];
-                        }
-                    }
-                }
-            }
-        }
-
-        // Then, construct the newGraph based on the portals retained in newAllPortals
-        for (let portalGUID in newAllPortals) {
-            // Initialize an entry in newGraph for the portal
-            newGraph[portalGUID] = [];
-
-            // Include connections to other portals that are also retained in newAllPortals
-            if (self.graph[portalGUID]) {
-                self.graph[portalGUID].forEach(neighborGUID => {
-                    if (newAllPortals.hasOwnProperty(neighborGUID)) {
-                        newGraph[portalGUID].push(neighborGUID);
-                    }
-                });
-            }
-        }
-
-        // Update self.allPortals and self.graph with the filtered results
-        self.allPortals = newAllPortals;
-        self.graph = newGraph;
-        self.updatePlan();
-    };
-
-    // Function to create and show the dialog
-    self.showClearConfirmationDialog = function() {
-        // Create dialog elements
-        var dialog = document.createElement('div');
-        dialog.id = 'clear-confirmation-dialog';
-        dialog.style.cssText = `position: fixed;
-        z-index: 1000;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(0,0,0,0.4);
-        display: flex;
-        justify-content: center;
-        align-items: center;
-    `;
-
-        var content = document.createElement('div');
-        content.style.cssText = `background-color: #fefefe;
-        padding: 20px;
-        border: 1px solid #888;
-        max-width: 500px;
-        text-align: center;
-    `;
-
-        var message = document.createElement('p');
-        message.textContent = 'Are you sure you want to clear all portals from the cache? This action cannot be undone.';
-
-        var yesButton = document.createElement('button');
-        yesButton.textContent = 'Yes, I\'m sure!';
-        yesButton.style.margin = '10px';
-
-        var cancelButton = document.createElement('button');
-        cancelButton.textContent = 'Cancel';
-        cancelButton.style.margin = '10px';
-
-        // Assemble the dialog
-        content.appendChild(message);
-        content.appendChild(yesButton);
-        content.appendChild(cancelButton);
-        dialog.appendChild(content);
-
-        // Add the dialog to the body
-        document.body.appendChild(dialog);
-
-        // Set up event listeners
-        yesButton.onclick = function() {
-            self.clearLayers();
-            self.startPortal = null;
-            self.plan = null;
-            self.allPortals = [];
-            self.graph = {};
-            $("#hcf-to-dt-btn").hide();
-            document.body.removeChild(dialog);
-            alert("All portals have been cleared from the cache.");
-        };
-
-        cancelButton.onclick = function() {
-            document.body.removeChild(dialog);
-        };
     }
 
     self.attachEventHandler = function() {
-        $("#hcf-to-dt-btn").click(function() {
-            self.exportToDrawtools(self.plan);
-        });
-
-        $("#swap-ends-btn").click(function() {
-            self.switchEndToStart();
-        });
-
-        $("#short-hop-colorPicker").change(function() {
-            self.drawLayer();
-        });
-
-        $("#long-hop-colorPicker").change(function() {
-            self.drawLayer();
-        });
-
-        $("#full-tree-colorPicker").change(function() {
-            self.drawLayer();
-        });
-
-        $("#hcf-clear-some-btn").click(function() {
-            self.clearPortalsOffTrack(false);
-        });
-
-        $("#hcf-clear-most-btn").click(function() {
-            self.clearPortalsOffTrack(true);
-        });
-
-        $("#hcf-clear-btn").click(function() {
-            self.showClearConfirmationDialog();
-//            self.clearLayers();
-//            self.startPortal = null;
-//            self.plan = null;
-//            self.allPortals = [];
-//            self.graph = {};
-//            $("#hcf-to-dt-btn").hide();
-        });
-
+        $("#hcf-to-dt-btn").click(function() { self.exportToDrawtools(self.plan); });
+        $("#hcf-copy-btn").click(function() { self.copyPlanToClipboard(); });
+        $("#short-hop-colorPicker, #long-hop-colorPicker, #full-tree-colorPicker").change(function() { self.drawLayer(); });
+        $("#long-hop-length").on('change input', function() { self.delayedUpdatePlan(); });
+        $("#hcf-clear-some-btn").click(function() { self.clearPortalsOffTrack(false); });
+        $("#hcf-reset-btn").click(function() { self.showResetConfirmationDialog(); });
+        
         $("#hcf-clear-start-btn").click(function() {
             self.clearLayers();
             self.startPortal = null;
             self.plan = null;
-            $("#hcf-to-dt-btn").hide();
+            $("#hcf-plan-list-container").html("<div style='padding:5px; color:#333;'>Start cleared.</div>");
         });
 
-        $("#scan-portals").click(function() {
-            self.scanPortalsAndUpdateGraph();
+        $("#hcf-set-start-btn").click(function() {
+            self.startPortal = null;
+            $("#hcf-plan-list-container").html("<div style='padding:5px; color:#000; background:#ffffaa;'><b>Waiting...</b><br>Click a portal on the map</div>");
         });
 
-        $("#more-info").click(function() {
-            self.open_info_dialog();
+        $("#scan-portals").click(function() { self.scanPortalsAndUpdateGraph(); });
+        $("#more-info").click(function() { self.open_info_dialog(); });
+
+        $('input[name="path-type"], input[name="allow-long-hops"], input[name="optimisation-type"]').change(function() {
+            self.delayedUpdatePlan();
+        });
+        
+        $('#hcf-plan-list-container').on('click', '.drone-step-info', function() {
+            let guid = $(this).data('guid');
+            self.panToPortal(guid);
         });
 
-        // Attach change event handlers to path optimization radio buttons
-        $('input[name="path-type"]').change(function() {
-            self.updatePlan();
+        $('#hcf-plan-list-container').on('click', '.drone-step-alt', function() {
+            let guid = $(this).data('guid');
+            self.blockAndReroute(guid);
         });
-
-        // Attach change event handlers to whether long hops are permitted
-        $('input[name="allow-long-hops"]').change(function() {
-            self.updatePlan();
-        });
-
-
-        // Attach change event handlers to optimization type radio buttons
-        $('input[name="optimisation-type"]').change(function() {
-            self.updatePlan();
-        });
-
-
-    } // end of attachEventHandler
+    } 
 
     self.portalSelected = function(data) {
-        // ignore if dialog closed
-        if (!self.dialogIsOpen() || self.startPortal) {
-            return;
-        };
-
-        // Ignore if already selected
+        if (!self.dialogIsOpen()) return;
+        if (self.startPortal) return;
         let portalDetails = window.portalDetail.get(data.selectedPortalGuid);
         if (portalDetails === undefined) return;
         self.startPortal = {guid: data.selectedPortalGuid, details: portalDetails};
-        self.updatePlan();
+        self.delayedUpdatePlan();
     };
 
     self.dialogIsOpen = function() {
         return ($("#dialog-hcf-plan-view").hasClass("ui-dialog-content") && $("#dialog-hcf-plan-view").dialog('isOpen'));
     };
-
     self.infoDialogIsOpen = function() {
         return ($("#dialog-hcf-info-view").hasClass("ui-dialog-content") && $("#dialog-hcf-info-view").dialog('isOpen'));
     };
-
     self.getLatLng = function(guid) {
         let portal = self.allPortals[guid] ? self.allPortals[guid].options.data : null;
-        if (portal) {
-            let lat = parseFloat(portal.latE6 / 1e6);
-            let lng = parseFloat(portal.lngE6 / 1e6);
-            return new L.latLng(lat, lng); // Assuming L.latLng is available in your context
-        }
+        if (portal) return new L.latLng(parseFloat(portal.latE6 / 1e6), parseFloat(portal.lngE6 / 1e6));
         return null;
     };
-
     self.getDistance = function(guid1, guid2) {
         let latLng1 = self.getLatLng(guid1);
         let latLng2 = self.getLatLng(guid2);
-
-        if (latLng1 && latLng2) {
-            return self.distance(latLng1, latLng2);
-        } else {
-            return Infinity; // Or some error handling if one of the portals is not found
-        }
+        if (latLng1 && latLng2) return self.distance(latLng1, latLng2);
+        else return Infinity;
     };
-
     self.distance = function(portal1, portal2) {
         return portal1.distanceTo(portal2);
     };
@@ -959,30 +836,16 @@ function wrapper(plugin_info) {
     // PLUGIN END
     self.pluginLoadedTimeStamp = performance.now();
     console.log('drone planner plugin is ready')
-
-
-    // Add an info property for IITC's plugin system
     var setup = self.setup;
     setup.info = plugin_info;
-
-    // export changelog
     if (typeof changelog !== 'undefined') setup.info.changelog = changelog;
-
-    // Make sure window.bootPlugins exists and is an array
     if (!window.bootPlugins) window.bootPlugins = [];
-    // Add our startup hook
     window.bootPlugins.push(setup);
-    // If IITC has already booted, immediately run the 'setup' function
     if (window.iitcLoaded && typeof setup === 'function') setup();
+} 
 
-} // wrapper end
-
-// Create a script element to hold our content script
 var script = document.createElement('script');
 var info = {};
-
-// GM_info is defined by the assorted monkey-themed browser extensions
-// and holds information parsed from the script header.
 if (typeof GM_info !== 'undefined' && GM_info && GM_info.script) {
     info.script = {
         version: GM_info.script.version,
@@ -990,10 +853,6 @@ if (typeof GM_info !== 'undefined' && GM_info && GM_info.script) {
         description: GM_info.script.description
     };
 }
-
-// Create a text node and our IIFE inside of it
 var textContent = document.createTextNode('('+ wrapper +')('+ JSON.stringify(info) +')');
-// Add some content to the script element
 script.appendChild(textContent);
-// Finally, inject it... wherever.
 (document.body || document.head || document.documentElement).appendChild(script);
