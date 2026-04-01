@@ -1,9 +1,9 @@
 // ==UserScript==
 // @id             iitc-plugin-drone-planner@57Cell
 // @name           IITC Plugin: 57Cell's Drone Flight Planner
-// @version        1.0.1.20250909
+// @version        1.0.2.20260331
 // @description    Plugin for planning drone flights in IITC
-// @author         57Cell (Michael Hartley) and ChatGPT 4.0
+// @author         57Cell (Michael Hartley) and ChatGPT 4.0, collaborations by kyke31 (Enrique H.) using Gemini 2.0
 // @category       Layer
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/drone-flight-planner/drone-flight-planner.meta.js

@@ -1,9 +1,9 @@
 // ==UserScript==
 // @id             iitc-plugin-drone-planner@57Cell
 // @name           IITC Plugin: 57Cell's Drone Flight Planner
-// @version        1.0.1.20250909
+// @version        1.0.2.20260331
 // @description    Plugin for planning drone flights in IITC
-// @author         57Cell (Michael Hartley) and ChatGPT 4.0
+// @author         57Cell (Michael Hartley) and ChatGPT 4.0, collaborations by kyke31 (Enrique H.) using Gemini 2.0
 // @category       Layer
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/drone-flight-planner/drone-flight-planner.meta.js
@@ -23,28 +23,39 @@
 // @grant        none
 // ==/UserScript==
 
-pluginName = "57Cell's Drone Planner";
-version = "1.0.1";
-changeLog = [
-    {
-        version: '1.0.1.20250909',
-        changes: [
-            'NEW: Allow users to disallow the key trick',
-        ],
-    },
-    {
-        version: '1.0.0.20250816',
-        changes: [
-            'NEW: Initial Public Release',
-        ],
-    },
-];
-
 function wrapper(plugin_info) {
     if (typeof window.plugin !== 'function') window.plugin = function() {};
     plugin_info.buildName = '';
-    plugin_info.dateTimeVersion = '2025-08-16-151500';
+    plugin_info.dateTimeVersion = '20260331';
     plugin_info.pluginId = '57CellsDronePlanner';
+
+    const pluginName = "57Cell's Drone Planner";
+    const version = "1.0.2";
+    const changeLog = [
+        {
+            version: '1.0.2.20260331',
+            changes: [
+                'FIX: Robust portal data caching to prevent path vanishing when portals go off-screen',
+                'FIX: Correctly populate plugin info for "About IITC" dialog',
+                'FIX: Start portal now automatically joins the graph upon selection',
+                'FIX: Use Yellow for start portal highlight to avoid conflict with faction colors',
+                'NEW: Persistent storage (localStorage) for portals and flight plans',
+                'FIX: DrawTools export bug (typeof check)',
+            ],
+        },
+        {
+            version: '1.0.1.20250909',
+            changes: [
+                'NEW: Allow users to disallow the key trick',
+            ],
+        },
+        {
+            version: '1.0.0.20250816',
+            changes: [
+                'NEW: Initial Public Release',
+            ],
+        },
+    ];
 
     // PLUGIN START
     console.log('loading drone plugin')
@@ -53,8 +64,7 @@ function wrapper(plugin_info) {
 
     // helper function to convert portal ID to portal object
     function portalIdToObject(portalId) {
-        let portals = self.allPortals; // IITC global object that contains all portal data
-        let portal = portals[portalId] ? portals[portalId].options.data : null;
+        let portal = self.allPortals[portalId];
 
         // Convert portal to the structure expected by populatePortalData
         if (portal) {
@@ -78,32 +88,61 @@ function wrapper(plugin_info) {
     self.allPortals = {};
     self.graph = {};
 
+    self.loadData = function() {
+        try {
+            var data = JSON.parse(localStorage['plugins-drone-planner-data'] || '{}');
+            if (data.allPortals) self.allPortals = data.allPortals;
+            if (data.graph) self.graph = data.graph;
+            console.log('Drone Planner: Loaded ' + Object.keys(self.allPortals).length + ' portals from cache.');
+        } catch (e) {
+            console.warn('Drone Planner: Failed to load cached data', e);
+            self.allPortals = {};
+            self.graph = {};
+        }
+    }
+
+    self.saveData = function() {
+        try {
+            var data = {
+                allPortals: self.allPortals,
+                graph: self.graph
+            };
+            localStorage['plugins-drone-planner-data'] = JSON.stringify(data);
+        } catch (e) {
+            console.warn('Drone Planner: Failed to save data to localStorage', e);
+        }
+    }
+
+    self.addPortalToGraph = function(key, data) {
+        if (!self.allPortals.hasOwnProperty(key)) {
+            self.allPortals[key] = data; // Add new portal data
+            self.graph[key] = []; // Initialize graph entry
+
+            // Check distance to all other portals in self.allPortals
+            for (let otherKey in self.allPortals) {
+                if (key !== otherKey) {
+                    let distance = self.getDistance(key, otherKey);
+                    if (distance <= self.getHardMaxDistance()) {
+                        // Add bidirectional edges for close portals
+                        self.graph[key].push(otherKey);
+                        if (!self.graph[otherKey].includes(key)) { // Prevent duplicate entries
+                            self.graph[otherKey].push(key);
+                        }
+                    }
+                }
+            }
+            self.saveData();
+        }
+    }
+
     self.scanPortalsAndUpdateGraph = function() {
-        let graph = self.graph;
         var bounds = map.getBounds(); // Current map view bounds
 
         for (let key in window.portals) {
             var portal = window.portals[key]; // Retrieve the portal object
             var portalLatLng = portal.getLatLng(); // Portal's latitude and longitude
             if (!self.allPortals.hasOwnProperty(key) && bounds.contains(portalLatLng)) {
-                self.allPortals[key] = portal; // Add new portal
-
-                // Initialize graph entry for the new portal
-                graph[key] = [];
-
-                // Check distance to all other portals in self.allPortals
-                for (let otherKey in self.allPortals) {
-                    if (key !== otherKey) {
-                        let distance = self.getDistance(key, otherKey);
-                        if (distance <= self.getHardMaxDistance()) {
-                            // Add bidirectional edges for close portals
-                            graph[key].push(otherKey);
-                            if (!graph[otherKey].includes(key)) { // Prevent duplicate entries
-                                graph[otherKey].push(key);
-                            }
-                        }
-                    }
-                }
+                self.addPortalToGraph(key, portal.options.data);
             }
         }
         self.updatePlan();
@@ -391,9 +430,9 @@ function wrapper(plugin_info) {
     self.getPortalNameFromGUID = function(guid) {
         let portalData = self.allPortals[guid];
 
-        if (portalData && portalData.options && portalData.options.data && portalData.options.data.title) {
+        if (portalData && portalData.title) {
             // Return the portal's name if it's available
-            return portalData.options.data.title;
+            return portalData.title;
         } else {
             // If the name isn't available, use the lat/lng as a fallback
             let latLng = self.getLatLng(guid);
@@ -437,6 +476,25 @@ function wrapper(plugin_info) {
             };
         }
 
+        // Draw start portal highlight
+        if (self.startPortal && self.startPortal.guid) {
+            let latLng = self.getLatLng(self.startPortal.guid);
+            if (latLng) {
+                L.circleMarker(latLng, {
+                    radius: 12,
+                    stroke: true,
+                    color: '#FFFF00',
+                    weight: 3,
+                    opacity: 1,
+                    fill: true,
+                    fillColor: '#FFFF00',
+                    fillOpacity: 0.1,
+                    interactive: false,
+                    clickable: false
+                }).addTo(self.highlightLayergroup);
+            }
+        }
+
         // Draw links in the tree
         for (let guid in self.plan) {
             if (self.plan[guid].parent) {
@@ -458,6 +516,7 @@ function wrapper(plugin_info) {
 
 
     self.setup = function() {
+        self.loadData();
         // Add button to toolbox
         $('#toolbox').append('<a onclick="window.plugin.dronePlanner.openDialog(); return false;">Plan Drone Flight</a>');
 
@@ -560,7 +619,7 @@ function wrapper(plugin_info) {
     // function to export and draw the plan to the drawtools plugin layer
     self.exportToDrawtools = function(plan) {
         // initialize plugin layer
-        if (window.plugin.drawTools !== 'undefined') {
+        if (typeof window.plugin.drawTools !== 'undefined') {
             for (var i=0; i<self.plan.furthestPath.length-1; i++) {
                 self.exportDrawtoolsLink(self.plan.furthestPath[i], self.plan.furthestPath[i+1]);
             }
@@ -728,6 +787,7 @@ function wrapper(plugin_info) {
     }
 
     self.clearPortalsOffTrack = function(keepNeighbours) {
+        if (!self.plan || !self.plan.furthestPath) return;
         var newAllPortals = {};
         var newGraph = {};
 
@@ -772,6 +832,7 @@ function wrapper(plugin_info) {
         // Update self.allPortals and self.graph with the filtered results
         self.allPortals = newAllPortals;
         self.graph = newGraph;
+        self.saveData();
         self.updatePlan();
     };
 
@@ -825,11 +886,12 @@ function wrapper(plugin_info) {
             self.clearLayers();
             self.startPortal = null;
             self.plan = null;
-            self.allPortals = [];
+            self.allPortals = {};
             self.graph = {};
+            self.saveData();
             $("#hcf-to-dt-btn").hide();
             document.body.removeChild(dialog);
-            alert("All portals have been cleared from the cache.");
+            alert("All portals have been cleared from the cache and local storage.");
         };
 
         cancelButton.onclick = function() {
@@ -871,7 +933,7 @@ function wrapper(plugin_info) {
 //            self.clearLayers();
 //            self.startPortal = null;
 //            self.plan = null;
-//            self.allPortals = [];
+//            self.allPortals = {};
 //            self.graph = {};
 //            $("#hcf-to-dt-btn").hide();
         });
@@ -920,6 +982,16 @@ function wrapper(plugin_info) {
         let portalDetails = window.portalDetail.get(data.selectedPortalGuid);
         if (portalDetails === undefined) return;
         self.startPortal = {guid: data.selectedPortalGuid, details: portalDetails};
+
+        // Ensure start portal is in graph
+        if (!self.allPortals[data.selectedPortalGuid]) {
+            self.addPortalToGraph(data.selectedPortalGuid, {
+                title: portalDetails.title,
+                latE6: portalDetails.latE6,
+                lngE6: portalDetails.lngE6
+            });
+        }
+
         self.updatePlan();
     };
 
@@ -932,7 +1004,7 @@ function wrapper(plugin_info) {
     };
 
     self.getLatLng = function(guid) {
-        let portal = self.allPortals[guid] ? self.allPortals[guid].options.data : null;
+        let portal = self.allPortals[guid];
         if (portal) {
             let lat = parseFloat(portal.latE6 / 1e6);
             let lng = parseFloat(portal.lngE6 / 1e6);
