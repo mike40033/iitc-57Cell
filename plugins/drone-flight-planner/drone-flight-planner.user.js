@@ -1,7 +1,7 @@
 // ==UserScript==
 // @id             iitc-plugin-drone-planner@57Cell
 // @name           IITC Plugin: 57Cell's Drone Flight Planner
-// @version        1.0.1.20250909
+// @version        1.0.2.20260821
 // @description    Plugin for planning drone flights in IITC
 // @author         57Cell (Michael Hartley) and ChatGPT 4.0
 // @category       Layer
@@ -24,8 +24,14 @@
 // ==/UserScript==
 
 pluginName = "57Cell's Drone Planner";
-version = "1.0.1";
+version = "1.0.2";
 changeLog = [
+    {
+        version: '1.0.2.20260821',
+        changes: [
+            'FIX: Much faster scanning - finding each portal\'s neighbours no longer compares it against every other portal',
+        ],
+    },
     {
         version: '1.0.1.20250909',
         changes: [
@@ -43,7 +49,7 @@ changeLog = [
 function wrapper(plugin_info) {
     if (typeof window.plugin !== 'function') window.plugin = function() {};
     plugin_info.buildName = '';
-    plugin_info.dateTimeVersion = '2025-08-16-151500';
+    plugin_info.dateTimeVersion = '2026-08-21-000000';
     plugin_info.pluginId = '57CellsDronePlanner';
 
     // PLUGIN START
@@ -77,34 +83,141 @@ function wrapper(plugin_info) {
 
     self.allPortals = {};
     self.graph = {};
+    self.latLngCache = {};
+
+    // ---- spatial index ---------------------------------------------------
+    // Finding the neighbours of a portal used to mean measuring it against
+    // every other known portal, so a scan cost O(n^2) distance calculations.
+    // Instead we keep a uniform grid of cells, each guaranteed to be at least
+    // getHardMaxDistance() metres across, so a portal's neighbours can only
+    // ever live in its own cell or the eight cells around it.
+
+    // Shortest a degree of latitude ever gets (metres, at the equator).
+    // Deliberately the minimum, so a cell always spans at least maxDist.
+    const MIN_METRES_PER_DEGREE = 110574;
+    const DEG_TO_RAD = Math.PI / 180;
+
+    self.grid = null;
+
+    self.newGrid = function(maxDist) {
+        return {
+            maxDist: maxDist,
+            latSpan: maxDist / MIN_METRES_PER_DEGREE,
+            rows: {},  // row -> { span, nCols } for that row's columns
+            cells: {}, // "row:col" -> [guid, ...]
+        };
+    };
+
+    // How a given row is divided into columns. Cells widen towards the poles so
+    // they keep spanning at least maxDist metres east to west. The worst-case
+    // latitude includes a row of slack, which is what lets us promise that a
+    // portal one row away is also at most one column away.
+    self.gridRowCols = function(grid, row) {
+        let cached = grid.rows[row];
+        if (cached === undefined) {
+            let worstLat = (Math.max(Math.abs(row), Math.abs(row + 1)) + 1) * grid.latSpan;
+            let cos = worstLat >= 90 ? 0 : Math.cos(worstLat * DEG_TO_RAD);
+            let span = cos > 0 ? grid.latSpan / cos : 360;
+            // Divide the row into equal columns, each at least `span` wide. They
+            // have to be equal: a narrow leftover column at the antimeridian
+            // would make "one column either side" cover less than maxDist.
+            let nCols = Math.max(1, Math.floor(360 / span));
+            cached = grid.rows[row] = { span: 360 / nCols, nCols: nCols };
+        }
+        return cached;
+    };
+
+    // Column of a longitude within a given row. Indices wrap, so the cells
+    // either side of the antimeridian come out adjacent.
+    self.gridCol = function(grid, row, lng) {
+        let rc = self.gridRowCols(grid, row);
+        let col = Math.floor((lng + 180) / rc.span);
+        return ((col % rc.nCols) + rc.nCols) % rc.nCols;
+    };
+
+    self.gridAdd = function(grid, guid, latLng) {
+        let row = Math.floor(latLng.lat / grid.latSpan);
+        let key = row + ':' + self.gridCol(grid, row, latLng.lng);
+        if (grid.cells[key]) {
+            grid.cells[key].push(guid);
+        } else {
+            grid.cells[key] = [guid];
+        }
+    };
+
+    // Every portal that could possibly be within maxDist of latLng. A superset
+    // of the true neighbours - callers still have to measure the candidates.
+    self.gridCandidates = function(grid, latLng) {
+        let candidates = [];
+        let seenCells = {};
+        let row = Math.floor(latLng.lat / grid.latSpan);
+        for (let r = row - 1; r <= row + 1; r++) {
+            let nCols = self.gridRowCols(grid, r).nCols;
+            let col = self.gridCol(grid, r, latLng.lng);
+            for (let d = -1; d <= 1; d++) {
+                let c = (((col + d) % nCols) + nCols) % nCols;
+                let key = r + ':' + c;
+                if (seenCells[key]) continue; // rows near the poles hold very few columns
+                seenCells[key] = true;
+                let cell = grid.cells[key];
+                if (cell) candidates.push.apply(candidates, cell);
+            }
+        }
+        return candidates;
+    };
+
+    // Rebuild the index from scratch, e.g. after portals have been discarded.
+    self.rebuildGrid = function(maxDist) {
+        let grid = self.newGrid(maxDist);
+        for (let guid in self.allPortals) {
+            let latLng = self.getLatLng(guid);
+            if (latLng) self.gridAdd(grid, guid, latLng);
+        }
+        self.grid = grid;
+        return grid;
+    };
 
     self.scanPortalsAndUpdateGraph = function() {
         let graph = self.graph;
-        var bounds = map.getBounds(); // Current map view bounds
+        let bounds = map.getBounds(); // Current map view bounds
+        let maxDist = self.getHardMaxDistance();
+
+        if (!self.grid || self.grid.maxDist !== maxDist) self.rebuildGrid(maxDist);
+        let grid = self.grid;
 
         for (let key in window.portals) {
-            var portal = window.portals[key]; // Retrieve the portal object
-            var portalLatLng = portal.getLatLng(); // Portal's latitude and longitude
-            if (!self.allPortals.hasOwnProperty(key) && bounds.contains(portalLatLng)) {
-                self.allPortals[key] = portal; // Add new portal
+            if (self.allPortals.hasOwnProperty(key)) continue;
+            let portal = window.portals[key]; // Retrieve the portal object
+            let portalLatLng = portal.getLatLng(); // Portal's latitude and longitude
+            if (!bounds.contains(portalLatLng)) continue;
 
-                // Initialize graph entry for the new portal
-                graph[key] = [];
+            self.allPortals[key] = portal; // Add new portal
 
-                // Check distance to all other portals in self.allPortals
-                for (let otherKey in self.allPortals) {
-                    if (key !== otherKey) {
-                        let distance = self.getDistance(key, otherKey);
-                        if (distance <= self.getHardMaxDistance()) {
-                            // Add bidirectional edges for close portals
-                            graph[key].push(otherKey);
-                            if (!graph[otherKey].includes(key)) { // Prevent duplicate entries
-                                graph[otherKey].push(key);
-                            }
-                        }
-                    }
-                }
+            // Index and measure using our own coordinates, not the marker's:
+            // the grid has to agree with getDistance right down to the cell
+            // boundaries, and Leaflet is free to move a marker's LatLng.
+            let latLng = self.getLatLng(key);
+
+            // Initialize graph entry for the new portal
+            graph[key] = [];
+
+            // A portal we have no coordinates for gets no neighbours, exactly as
+            // it did when every distance to it came back as Infinity.
+            if (!latLng) continue;
+
+            // Only portals in this cell or the eight around it can be in range.
+            // The new portal isn't in the grid yet, so every pair is measured
+            // exactly once and neither direction can be a duplicate.
+            let candidates = self.gridCandidates(grid, latLng);
+            for (let i = 0; i < candidates.length; i++) {
+                let otherKey = candidates[i];
+                if (self.getDistance(key, otherKey) > maxDist) continue;
+                // Add bidirectional edges for close portals
+                graph[key].push(otherKey);
+                graph[otherKey].push(key);
             }
+
+            self.gridAdd(grid, key, latLng);
         }
         self.updatePlan();
     }
@@ -742,13 +855,18 @@ function wrapper(plugin_info) {
 
         // if keepNeighbours is true, also keep portals within 1.25km of furthestPath portals
         if (keepNeighbours) {
+            let maxDist = self.getHardMaxDistance();
+            let grid = (!self.grid || self.grid.maxDist !== maxDist) ? self.rebuildGrid(maxDist) : self.grid;
             for (let pathPortalGUID of furthestPathSet) {
-                for (let portalGUID in self.allPortals) {
-                    if (!newAllPortals[portalGUID]) {
-                        let distance = self.getDistance(pathPortalGUID, portalGUID);
-                        if (distance <= self.getHardMaxDistance()) {
-                            newAllPortals[portalGUID] = self.allPortals[portalGUID];
-                        }
+                let latLng = self.getLatLng(pathPortalGUID);
+                if (!latLng) continue;
+                // Ask the grid for nearby portals instead of walking them all
+                let candidates = self.gridCandidates(grid, latLng);
+                for (let i = 0; i < candidates.length; i++) {
+                    let portalGUID = candidates[i];
+                    if (newAllPortals[portalGUID]) continue;
+                    if (self.getDistance(pathPortalGUID, portalGUID) <= maxDist) {
+                        newAllPortals[portalGUID] = self.allPortals[portalGUID];
                     }
                 }
             }
@@ -772,6 +890,14 @@ function wrapper(plugin_info) {
         // Update self.allPortals and self.graph with the filtered results
         self.allPortals = newAllPortals;
         self.graph = newGraph;
+        // Drop the discarded portals from the caches, or the index would hand
+        // out neighbours that are no longer part of the plan.
+        let newLatLngCache = {};
+        for (let portalGUID in newAllPortals) {
+            if (self.latLngCache[portalGUID]) newLatLngCache[portalGUID] = self.latLngCache[portalGUID];
+        }
+        self.latLngCache = newLatLngCache;
+        self.rebuildGrid(self.getHardMaxDistance());
         self.updatePlan();
     };
 
@@ -825,8 +951,10 @@ function wrapper(plugin_info) {
             self.clearLayers();
             self.startPortal = null;
             self.plan = null;
-            self.allPortals = [];
+            self.allPortals = {};
             self.graph = {};
+            self.latLngCache = {};
+            self.grid = null;
             $("#hcf-to-dt-btn").hide();
             document.body.removeChild(dialog);
             alert("All portals have been cleared from the cache.");
@@ -932,11 +1060,17 @@ function wrapper(plugin_info) {
     };
 
     self.getLatLng = function(guid) {
+        // Path finding asks for the same coordinates over and over, so cache
+        // them rather than building a fresh L.latLng on every call.
+        let cached = self.latLngCache[guid];
+        if (cached !== undefined) return cached;
         let portal = self.allPortals[guid] ? self.allPortals[guid].options.data : null;
         if (portal) {
             let lat = parseFloat(portal.latE6 / 1e6);
             let lng = parseFloat(portal.lngE6 / 1e6);
-            return new L.latLng(lat, lng); // Assuming L.latLng is available in your context
+            let latLng = new L.latLng(lat, lng); // Assuming L.latLng is available in your context
+            self.latLngCache[guid] = latLng;
+            return latLng;
         }
         return null;
     };
