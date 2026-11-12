@@ -1,27 +1,40 @@
 // ==UserScript==
 // @id             iitc-plugin-image-overlay@57Cell
 // @name           IITC Plugin: 57Cell's Image Overlay
-// @version        0.1.4.20240807
+// @version        0.1.5.20261111
 // @description    Plugin for overlaying and adjusting images on the map
-// @author         57Cell (Michael Hartley) and Claude.AI
+// @author         57Cell (Michael Hartley), Qu4rd and Claude.AI
 // @category       Layer
 // @namespace      https://github.com/jonatkins/ingress-intel-total-conversion
 // @updateURL      https://github.com/mike40033/iitc-57Cell/raw/master/plugins/image-overlay/image-overlay.meta.js
 // @downloadURL    https://github.com/mike40033/iitc-57Cell/raw/master/plugins/image-overlay/image-overlay.user.js
-// @include        https://*.ingress.com/intel*
-// @include        http://*.ingress.com/intel*
-// @match          https://*.ingress.com/intel*
-// @match          http://*.ingress.com/intel*
-// @include        https://*.ingress.com/mission/*
-// @include        http://*.ingress.com/mission/*
-// @match          https://*.ingress.com/mission/*
-// @match          http://*.ingress.com/mission/*
+// @include        https://intel.ingress.com/*
+// @match          https://intel.ingress.com/*
 // @grant          none
 // ==/UserScript==
 
 var pluginName = "57Cell's Image Overlay";
-var version = "0.1.4";
+var version = "0.1.5";
 var changeLog = [
+    {
+        version: '0.1.5.20261111',
+        changes: [
+            'Thanks to Ingress agent Qu4rd for contributing most of the fixes and the local image loading in this release',
+            'Fixed @match/@include so the script loads on intel.ingress.com',
+            'Added loading an image from a local file (stored as a data URL)',
+            'Large local images are downscaled to fit in localStorage',
+            'Local images keep transparency unless they are JPEGs',
+            'Warn when an image is too large to save, instead of silently restoring an older image on reload',
+            'Fixed fine zoom slider default value',
+            'Fixed resetSliders targeting wrong element IDs',
+            'Fixed Reset zoom button, which previously did nothing',
+            'Removed duplicate controls container and unused showDialog',
+            'Fixed clearing of lat/lng inputs when no image is present',
+            'Applying a different image now places it fresh instead of reusing the old image\'s bounds',
+            'Aspect ratio is recalculated from saved bounds on reload',
+            'Remove Image now also clears the URL, file input and stored image data',
+        ],
+    },
     {
         version: '0.1.4.20240807',
         changes: [
@@ -33,13 +46,12 @@ var changeLog = [
             'Implemented state persistence using localStorage',
         ],
     },
-    // ... previous changelog entries ...
 ];
 
 function wrapper(plugin_info) {
     if (typeof window.plugin !== 'function') window.plugin = function() {};
     plugin_info.buildName = '';
-    plugin_info.dateTimeVersion = '2024-08-07-180000';
+    plugin_info.dateTimeVersion = '2026-11-11-120000';
     plugin_info.pluginId = '57CellsImageOverlay';
 
     // PLUGIN START ////////////////////////////////////////////////////////
@@ -49,11 +61,18 @@ function wrapper(plugin_info) {
 
     self.imageOverlay = null;
     self.imageUrl = '';
+    self.isLocal = false;
     self.imageBounds = null;
     self.imageOpacity = 0.5;
     self.layerGroup = null;
     self.imageAspectRatio = 1;
+    self.baseWidth = null; // width (degrees lng) when the image was first placed
+    self.saveWarnedFor = null;
     self.imageZoom = 1;
+    self.imageRotation = 0;
+    self.zoomSliderCurrentValue = 1;
+    self.fineMoveCurrentH = 0;
+    self.fineMoveCurrentV = 0;
 
     self.setupCSS = function() {
         $('<style>').prop('type', 'text/css').html(''
@@ -93,9 +112,7 @@ function wrapper(plugin_info) {
     };
 
     self.setupUI = function() {
-        var container = $('<div id="image-overlay-dialog">')
-            .append('<div id="image-overlay-controls"></div>')
-            .appendTo('body');
+        var container = $('<div id="image-overlay-dialog">').appendTo('body');
 
         container.dialog({
             autoOpen: false,
@@ -104,15 +121,17 @@ function wrapper(plugin_info) {
             position: { my: "left top", at: "left+60 top+20", of: "#map" }
         });
 
-        var controlsHTML = $('<div>')
+        $('<div>')
             .attr('id', 'image-overlay-controls')
             .html(''
             + '<label for="image-url">Image URL:</label>'
             + '<input id="image-url" type="text" placeholder="Enter image URL">'
+            + '<label for="image-file">Or choose a file:</label>'
+            + '<input id="image-file" type="file" accept="image/*">'
             + '<label for="image-opacity">Opacity:</label>'
             + '<input id="image-opacity" type="range" min="0" max="1" step="0.1" value="0.5">'
             + '<label for="image-zoom">Fine Zoom:</label>'
-            + '<input id="image-zoom" type="range" min="-0.5" max="0.5" step="0.01" value="1">'
+            + '<input id="image-zoom" type="range" min="-0.5" max="0.5" step="0.01" value="0">'
             + '<div id="image-zoom-buttons">'
             + '  <button id="zoom-out">Smaller</button>'
             + '  <button id="zoom-reset">Reset</button>'
@@ -136,15 +155,53 @@ function wrapper(plugin_info) {
             + '<input id="image-lng" type="number" step="0.000001">'
             + '<button id="view-image">View</button>'
             + '<p>Width: <span id="image-width"></span>, Height: <span id="image-height"></span></p>'
-            + '<p><small>Note: Please ensure you have the right to use any images you overlay.</small></p>'
-            + '</div>')
+            + '<p><small>Note: Please ensure you have the right to use any images you overlay.</small></p>')
             .appendTo(container);
 
-
         $('#image-url').on('change', function() {
-            self.imageUrl = $(this).val();
-            self.saveState();
+            // Only remember that the user typed a URL; applyImage() picks it up.
+            // Setting self.imageUrl here would stop applyImage() noticing the change.
+            self.isLocal = false;
         });
+
+        $('#image-file').on('change', function() {
+            var input = this;
+            var file = input.files && input.files[0];
+            if (!file) return;
+
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                // Downscale big images so they fit in localStorage and render quickly
+                var img = new Image();
+                img.onload = function() {
+                    var maxDim = 2048;
+                    var scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+                    var canvas = document.createElement('canvas');
+                    canvas.width = Math.round(img.naturalWidth * scale);
+                    canvas.height = Math.round(img.naturalHeight * scale);
+                    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                    // JPEG is much smaller for photos; everything else stays PNG
+                    // so transparency (PNG, GIF, WebP, SVG) is kept
+                    var isJpeg = file.type === 'image/jpeg';
+                    self.imageUrl = isJpeg ? canvas.toDataURL('image/jpeg', 0.85)
+                                           : canvas.toDataURL('image/png');
+                    self.isLocal = true;
+                    self.imageBounds = null; // new image, so place it fresh on the map
+                    self.baseWidth = null;
+                    $('#image-url').val('(local) ' + file.name);
+                    self.applyImage();
+
+                    // Allow picking the same file again later
+                    input.value = '';
+                };
+                img.onerror = function() { alert('Could not read that image file.'); };
+                img.src = e.target.result;
+            };
+            reader.onerror = function() { alert('Could not read that file.'); };
+            reader.readAsDataURL(file);
+        });
+
         $('#apply-image').click(self.applyImage);
         $('#remove-image').click(self.removeImage);
         $('#image-opacity').on('input', function() {
@@ -154,24 +211,21 @@ function wrapper(plugin_info) {
             }
             self.saveState();
         });
-        self.zoomSliderCurrentValue = 1;
+
         $('#image-zoom').on('input', function() {
-            let zoomSliderNewValue = Math.exp(parseFloat($(this).val()));
+            var zoomSliderNewValue = Math.exp(parseFloat($(this).val()));
             self.imageZoom *= zoomSliderNewValue / self.zoomSliderCurrentValue;
             self.zoomSliderCurrentValue = zoomSliderNewValue;
             self.updateImageBounds();
         });
         $('#zoom-out').click(function() { self.adjustZoom(0.8); });
-        $('#zoom-reset').click(function() { self.adjustZoom(1 / self.imageZoom); });
+        $('#zoom-reset').click(self.resetZoom);
         $('#zoom-in').click(function() { self.adjustZoom(1.25); });
 
-        $('#move-north').click(() => self.moveImage(0, 0.5));
-        $('#move-south').click(() => self.moveImage(0, -0.5));
-        $('#move-east').click(() => self.moveImage(0.5, 0));
-        $('#move-west').click(() => self.moveImage(-0.5, 0));
-
-        self.fineMoveCurrentH = 0;
-        self.fineMoveCurrentV = 0;
+        $('#move-north').click(function() { self.moveImage(0, 0.5); });
+        $('#move-south').click(function() { self.moveImage(0, -0.5); });
+        $('#move-east').click(function() { self.moveImage(0.5, 0); });
+        $('#move-west').click(function() { self.moveImage(-0.5, 0); });
 
         $('#move-fine-h').on('input', function() {
             var newValue = parseFloat($(this).val());
@@ -183,11 +237,9 @@ function wrapper(plugin_info) {
         $('#move-fine-v').on('input', function() {
             var newValue = parseFloat($(this).val());
             var delta = newValue - self.fineMoveCurrentV;
-            self.moveImage(0, delta); // Move horizontally based on the change
+            self.moveImage(0, delta); // Move vertically based on the change
             self.fineMoveCurrentV = newValue;
         });
-
-        self.imageRotation = 0;
 
         $('#image-rotation').on('input', function() {
             self.imageRotation = parseInt($(this).val());
@@ -200,10 +252,12 @@ function wrapper(plugin_info) {
         $('#image-lat, #image-lng').on('change', function() {
             var lat = parseFloat($('#image-lat').val());
             var lng = parseFloat($('#image-lng').val());
+            if (isNaN(lat) || isNaN(lng)) return;
             self.updateImagePosition(lat, lng);
         });
 
         $('#view-image').click(self.panToImage);
+
         var link = $('<a>')
             .html('Image Overlay')
             .click(function() {
@@ -217,30 +271,35 @@ function wrapper(plugin_info) {
         }
     };
 
-    self.showDialog = function() {
-        self.dialog.dialog('open');
-    };
-
     self.dialogClosedCallback = function() {
         // Any cleanup needed when dialog is closed
     };
 
     self.resetSliders = function() {
-        $('#move-fine').val(0);
-        self.fineMoveCurrent = 0;
+        $('#move-fine-h, #move-fine-v').val(0);
+        self.fineMoveCurrentH = 0;
+        self.fineMoveCurrentV = 0;
         $('#image-zoom').val(0);
         self.zoomSliderCurrentValue = 1;
     };
 
     self.applyImage = function() {
-        self.imageUrl = $('#image-url').val();
-        if (!self.imageUrl) {
-            alert('Please enter an image URL');
+        var newUrl = self.isLocal ? self.imageUrl : $('#image-url').val();
+        if (!newUrl) {
+            alert('Please enter an image URL or choose a file');
             return;
         }
 
+        // A different image may have a different aspect ratio, so start fresh
+        if (newUrl !== self.imageUrl) {
+            self.imageBounds = null;
+            self.baseWidth = null;
+        }
+        self.imageUrl = newUrl;
+
         if (self.imageOverlay) {
             self.layerGroup.removeLayer(self.imageOverlay);
+            self.imageOverlay = null;
         }
 
         var img = new Image();
@@ -260,7 +319,6 @@ function wrapper(plugin_info) {
             var mapCenter = map.getCenter();
             var mapBounds = map.getBounds();
             var mapWidth = mapBounds.getEast() - mapBounds.getWest();
-            var mapHeight = mapBounds.getNorth() - mapBounds.getSouth();
 
             var imageWidth = mapWidth / 4;
             var imageHeight = imageWidth / self.imageAspectRatio * Math.cos(Math.PI / 180 * mapCenter.lat);
@@ -269,6 +327,10 @@ function wrapper(plugin_info) {
                 [mapCenter.lat - imageHeight/2, mapCenter.lng - imageWidth/2],
                 [mapCenter.lat + imageHeight/2, mapCenter.lng + imageWidth/2]
             ];
+            self.baseWidth = imageWidth;
+        }
+        if (!self.baseWidth) {
+            self.baseWidth = self.imageBounds[1][1] - self.imageBounds[0][1];
         }
 
         self.imageOverlay = L.imageOverlay(self.imageUrl, self.imageBounds, {
@@ -292,11 +354,16 @@ function wrapper(plugin_info) {
         if (self.imageOverlay) {
             self.layerGroup.removeLayer(self.imageOverlay);
             self.imageOverlay = null;
-            self.imageBounds = null;
-            self.updateImageInfo();
-            self.saveState();
-            self.resetSliders();
         }
+        self.imageBounds = null;
+        self.baseWidth = null;
+        self.imageUrl = '';
+        self.isLocal = false;
+        $('#image-url').val('');
+        $('#image-file').val('');
+        self.updateImageInfo();
+        self.saveState();
+        self.resetSliders();
     };
 
     self.moveImage = function(percentLng, percentLat) {
@@ -311,10 +378,10 @@ function wrapper(plugin_info) {
 
         var currentSouth = currentBounds.getSouth();
         var currentNorth = currentBounds.getNorth();
-        var currentCentre = (currentSouth + currentNorth)/2;
+        var currentCentre = (currentSouth + currentNorth) / 2;
         var currentHeight = currentNorth - currentSouth;
         var newCentre = currentCentre + deltaLat;
-        var newHeight = currentHeight / Math.cos(Math.PI / 180 * currentCentre) *  Math.cos(Math.PI / 180 * newCentre);
+        var newHeight = currentHeight / Math.cos(Math.PI / 180 * currentCentre) * Math.cos(Math.PI / 180 * newCentre);
         var newBounds = [
             [newCentre - newHeight/2, currentBounds.getWest() + deltaLng],
             [newCentre + newHeight/2, currentBounds.getEast() + deltaLng]
@@ -350,6 +417,16 @@ function wrapper(plugin_info) {
         map.panTo(center);
     };
 
+    // Back to the width the image had when it was first placed
+    self.resetZoom = function() {
+        if (!self.imageOverlay || !self.baseWidth) return;
+        var b = self.imageOverlay.getBounds();
+        var width = b.getEast() - b.getWest();
+        $('#image-zoom').val(0);
+        self.zoomSliderCurrentValue = 1;
+        if (width > 0) self.adjustZoom(self.baseWidth / width);
+    };
+
     self.adjustZoom = function(factor) {
         self.imageZoom *= factor;
         self.updateImageBounds();
@@ -370,14 +447,14 @@ function wrapper(plugin_info) {
         ];
 
         self.imageOverlay.setBounds(self.imageBounds);
-//        self.imageOverlay.getElement().style.transform = `rotate(${self.imageRotation}deg)`
+//      self.imageOverlay.getElement().style.transform = `rotate(${self.imageRotation}deg)`
         self.updateImageInfo();
         self.saveState();
         self.imageZoom = 1;
     };
 
     self.updateImageInfo = function() {
-        if (self.imageBounds) {
+        if (self.imageBounds && self.imageOverlay) {
             var center = self.imageOverlay.getBounds().getCenter();
             $('#image-lat').val(center.lat.toFixed(6));
             $('#image-lng').val(center.lng.toFixed(6));
@@ -394,7 +471,8 @@ function wrapper(plugin_info) {
             $('#image-width').text(self.formatDistance(widthMeters));
             $('#image-height').text(self.formatDistance(heightMeters));
         } else {
-            $('#image-lat, #image-lng, #image-width, #image-height').text('');
+            $('#image-lat, #image-lng').val('');
+            $('#image-width, #image-height').text('');
         }
     };
 
@@ -415,31 +493,69 @@ function wrapper(plugin_info) {
                 [self.imageBounds[1][0], self.imageBounds[1][1]]
             ] : null,
             imageOpacity: self.imageOpacity,
-            imageZoom: self.imageZoom
+            imageZoom: self.imageZoom,
+            baseWidth: self.baseWidth
 //          imageRotation: self.imageRotation
         };
-        localStorage.setItem('plugin-imageOverlay-state', JSON.stringify(state));
+        try {
+            localStorage.setItem('plugin-imageOverlay-state', JSON.stringify(state));
+        } catch (e) {
+            // Most likely a local image too large for localStorage.
+            // Don't leave the previous state behind, or the old image would come back on reload.
+            console.warn('Image Overlay: could not save state', e);
+            try {
+                localStorage.removeItem('plugin-imageOverlay-state');
+            } catch (e2) {}
+            if (self.saveWarnedFor !== self.imageUrl) {
+                self.saveWarnedFor = self.imageUrl;
+                alert('This image is too large to save in the browser. '
+                    + 'It will stay on the map for now, but will be gone after you reload the page.');
+            }
+        }
     };
 
     self.loadState = function() {
-        var stateJson = localStorage.getItem('plugin-imageOverlay-state');
-        if (stateJson) {
-            var state = JSON.parse(stateJson);
-            if (state.version === 1) {
-                self.imageUrl = state.imageUrl;
-                self.imageBounds = state.imageBounds;
-                self.imageOpacity = state.imageOpacity;
-                self.imageZoom = state.imageZoom;
-//              self.imageRotation = state.imageRotation || 0;
-                self.imageRotation = 0;
-                $('#image-url').val(self.imageUrl);
-                $('#image-opacity').val(self.imageOpacity);
-                $('#image-zoom').val(0);
-                $('#image-rotation').val(self.imageRotation);
+        var stateJson;
+        try {
+            stateJson = localStorage.getItem('plugin-imageOverlay-state');
+        } catch (e) {
+            return;
+        }
+        if (!stateJson) return;
 
-                if (self.imageUrl && self.imageBounds) {
-                    self.createImageOverlay();
+        var state;
+        try {
+            state = JSON.parse(stateJson);
+        } catch (e) {
+            console.warn('Image Overlay: saved state is corrupt, ignoring', e);
+            return;
+        }
+
+        if (state && state.version === 1) {
+            self.imageUrl = state.imageUrl || '';
+            self.imageBounds = state.imageBounds;
+            self.imageOpacity = (typeof state.imageOpacity === 'number') ? state.imageOpacity : 0.5;
+            self.imageZoom = 1; // zoom is applied immediately and reset, so never restore it
+            self.baseWidth = (typeof state.baseWidth === 'number') ? state.baseWidth : null;
+            self.imageRotation = 0;
+
+            self.isLocal = self.imageUrl.indexOf('data:') === 0;
+            $('#image-url').val(self.isLocal ? '(saved local image)' : self.imageUrl);
+            $('#image-opacity').val(self.imageOpacity);
+            $('#image-zoom').val(0);
+            $('#image-rotation').val(self.imageRotation);
+
+            if (self.imageUrl && self.imageBounds) {
+                // Work out the aspect ratio from the saved bounds so zooming
+                // keeps the right shape without waiting for the image to load
+                var b = self.imageBounds;
+                var midLat = (b[0][0] + b[1][0]) / 2;
+                var w = b[1][1] - b[0][1];
+                var h = b[1][0] - b[0][0];
+                if (h > 0) {
+                    self.imageAspectRatio = w / h * Math.cos(Math.PI / 180 * midLat);
                 }
+                self.createImageOverlay();
             }
         }
     };
